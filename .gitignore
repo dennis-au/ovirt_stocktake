@@ -1,0 +1,3 @@
+.env.ovirt
+endpoints.json
+__pycache__/

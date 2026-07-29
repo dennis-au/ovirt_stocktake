@@ -1,0 +1,16 @@
+{
+  "endpoints": [
+    {
+      "name": "production",
+      "url": "https://engine.production.example.internal",
+      "username_env": "OVIRT_PRODUCTION_USERNAME",
+      "password_env": "OVIRT_PRODUCTION_PASSWORD"
+    },
+    {
+      "name": "lab",
+      "url": "https://engine.lab.example.internal",
+      "token_env": "OVIRT_LAB_TOKEN",
+      "insecure": true
+    }
+  ]
+}
