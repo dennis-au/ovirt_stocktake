@@ -37,9 +37,10 @@ docker run --rm \
 ## Publish
 
 ```sh
-docker login ghcr.io -u dennis-au
-make push VERSION=0.1.0
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
-This publishes a single `linux/amd64` and `linux/arm64` image manifest to
-`ghcr.io/dennis-au/ovirt_inventory`.
+The GitHub Actions workflow builds a single `linux/amd64` and `linux/arm64`
+manifest and publishes `ghcr.io/dennis-au/ovirt_inventory:0.1.0` and `latest`.
+Pushes to `main` refresh `latest`.
