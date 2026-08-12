@@ -24,6 +24,7 @@ LABEL org.opencontainers.image.description="oVirt/RHV inventory web app"
 ENV NODE_ENV=production \
     OVIRT_INVENTORY_HOST=0.0.0.0 \
     OVIRT_INVENTORY_PORT=3000 \
+    OVIRT_INVENTORY_ENV_FILE=/data/.env \
     OVIRT_INVENTORY_DB_PATH=/data/ovirt-inventory.sqlite
 
 WORKDIR /app

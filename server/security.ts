@@ -1,4 +1,4 @@
-import { randomBytes, scrypt as scryptCallback, timingSafeEqual, type BinaryLike, type ScryptOptions } from "node:crypto";
+import { randomBytes, scrypt as scryptCallback, scryptSync, timingSafeEqual, type BinaryLike, type ScryptOptions } from "node:crypto";
 
 const KEY_LENGTH = 32;
 const DEFAULT_COST = 16384;
@@ -16,15 +16,21 @@ export async function hashPassword(password: string, salt: Buffer = randomBytes(
     p: DEFAULT_PARALLELISM
   });
 
-  return [
-    "scrypt",
-    "v1",
-    DEFAULT_COST,
-    DEFAULT_BLOCK_SIZE,
-    DEFAULT_PARALLELISM,
-    salt.toString("base64url"),
-    derived.toString("base64url")
-  ].join("$");
+  return formatPasswordHash(salt, derived);
+}
+
+export function hashPasswordSync(password: string, salt: Buffer = randomBytes(16)): string {
+  if (!password) {
+    throw new Error("password is required");
+  }
+
+  const derived = scryptSync(password, salt, KEY_LENGTH, {
+    N: DEFAULT_COST,
+    r: DEFAULT_BLOCK_SIZE,
+    p: DEFAULT_PARALLELISM
+  });
+
+  return formatPasswordHash(salt, derived);
 }
 
 export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
@@ -52,6 +58,18 @@ function scrypt(password: BinaryLike, salt: BinaryLike, keyLength: number, optio
       resolve(derivedKey);
     });
   });
+}
+
+function formatPasswordHash(salt: Buffer, derived: Buffer): string {
+  return [
+    "scrypt",
+    "v1",
+    DEFAULT_COST,
+    DEFAULT_BLOCK_SIZE,
+    DEFAULT_PARALLELISM,
+    salt.toString("base64url"),
+    derived.toString("base64url")
+  ].join("$");
 }
 
 function parsePasswordHash(storedHash: string):

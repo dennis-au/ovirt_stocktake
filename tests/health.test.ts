@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../server/app.js";
 import { loadConfig, type AppConfig } from "../server/config.js";
 import { databaseHealth, openDatabase, type SqliteDatabase } from "../server/db.js";
+import { verifyPassword } from "../server/security.js";
 
 const databases: SqliteDatabase[] = [];
 type TestConfigOverrides = Partial<Omit<AppConfig, "auth">> & {
@@ -103,6 +104,18 @@ describe("configuration", () => {
         OVIRT_INVENTORY_INVENTORY_SYNC_MINUTES: "0"
       })
     ).toThrow("OVIRT_INVENTORY_INVENTORY_SYNC_MINUTES must be greater than zero");
+  });
+
+  it("derives the admin password hash from a plaintext environment fallback", async () => {
+    const config = loadConfig({
+      OVIRT_INVENTORY_DB_PATH: ":memory:",
+      OVIRT_INVENTORY_ADMIN_PASSWORD: "inventory admin",
+      OVIRT_INVENTORY_SESSION_SECRET: "test-session-secret-with-enough-length"
+    });
+
+    expect(config.auth.adminPasswordHash).toMatch(/^scrypt\$v1\$/);
+    expect(config.auth.adminPasswordHash).not.toContain("inventory admin");
+    await expect(verifyPassword("inventory admin", config.auth.adminPasswordHash!)).resolves.toBe(true);
   });
 });
 

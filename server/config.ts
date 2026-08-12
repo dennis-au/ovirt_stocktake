@@ -1,7 +1,10 @@
-import "dotenv/config";
-import { mkdirSync } from "node:fs";
+import { config as loadDotenv } from "dotenv";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { AppRole } from "./rbac.js";
+import { hashPasswordSync } from "./security.js";
+
+loadRuntimeEnvFiles();
 
 export interface AppConfig {
   host: string;
@@ -118,12 +121,42 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     auth: {
       adminUsername: environment.OVIRT_INVENTORY_ADMIN_USERNAME ?? "admin",
       adminRole,
-      adminPasswordHash: environment.OVIRT_INVENTORY_ADMIN_PASSWORD_HASH,
+      adminPasswordHash: adminPasswordHashFromEnvironment(environment),
       sessionSecret: environment.OVIRT_INVENTORY_SESSION_SECRET,
       sessionTtlHours,
       secureCookies: (environment.NODE_ENV ?? "development") === "production"
     }
   };
+}
+
+function loadRuntimeEnvFiles(): void {
+  const candidates = [process.env.OVIRT_INVENTORY_ENV_FILE];
+  if (process.env.NODE_ENV !== "test") {
+    candidates.push("/data/.env", ".env");
+  }
+  const loaded = new Set<string>();
+
+  for (const candidate of candidates) {
+    if (!candidate?.trim()) {
+      continue;
+    }
+    const path = resolve(candidate);
+    if (loaded.has(path) || !existsSync(path)) {
+      continue;
+    }
+    loadDotenv({ path, override: false, quiet: true });
+    loaded.add(path);
+  }
+}
+
+function adminPasswordHashFromEnvironment(environment: NodeJS.ProcessEnv): string | undefined {
+  if (environment.OVIRT_INVENTORY_ADMIN_PASSWORD_HASH) {
+    return environment.OVIRT_INVENTORY_ADMIN_PASSWORD_HASH;
+  }
+  if (environment.OVIRT_INVENTORY_ADMIN_PASSWORD) {
+    return hashPasswordSync(environment.OVIRT_INVENTORY_ADMIN_PASSWORD);
+  }
+  return undefined;
 }
 
 function parseMetricsBackend(value: string): MetricsConfig["backend"] | undefined {
