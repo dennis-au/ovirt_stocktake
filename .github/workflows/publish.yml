@@ -19,12 +19,12 @@ jobs:
         run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Build and push
         env:
-          IMAGE: ghcr.io/${{ github.repository_owner }}/ovirt_inventory
+          IMAGE: ghcr.io/${{ github.repository }}
         run: |
           version=latest
           tags="--tag ${IMAGE}:latest"
           if [ "${GITHUB_REF_TYPE}" = tag ]; then
-            version="${GITHUB_REF_NAME#v}"
+            version="${GITHUB_REF_NAME}"
             tags="${tags} --tag ${IMAGE}:${version}"
           fi
           docker buildx build --platform linux/amd64,linux/arm64 --build-arg VERSION="${version}" ${tags} --push .

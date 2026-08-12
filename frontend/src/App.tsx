@@ -1,0 +1,1235 @@
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  Database,
+  Download,
+  HardDrive,
+  History,
+  LayoutDashboard,
+  ArrowLeft,
+  LogIn,
+  LogOut,
+  Network,
+  Play,
+  Server,
+  XCircle
+} from "lucide-react";
+import { type ChangeEvent, type FormEvent, useEffect, useState } from "react";
+import {
+  collectAllManagers,
+  collectManager,
+  createManager,
+  deleteManager,
+  getDashboard,
+  getDashboardCluster,
+  getSnapshot,
+  getSnapshotVmInventory,
+  getSession,
+  listManagers,
+  listSnapshots,
+  login,
+  logout,
+  snapshotVmInventoryExportUrl,
+  testManagerCollection,
+  updateManager,
+  type DashboardClusterDetail,
+  type DashboardClusterSummary,
+  type DashboardClusterVm,
+  type DashboardResponse,
+  type Manager,
+  type ManagerInput,
+  type ManagerTestCollectionResult,
+  type SnapshotDetail,
+  type SnapshotSummary,
+  type SnapshotVmInventoryFilters,
+  type SnapshotVmInventoryResponse,
+  type SnapshotVmInventoryRow,
+  type SessionResponse
+} from "./api";
+
+type PageId = "dashboard" | "inventory" | "managers" | "history" | "cluster";
+type SnapshotFilters = { managerId: string; status: string };
+
+const pageTitles: Record<PageId, string> = {
+  dashboard: "Dashboard",
+  inventory: "Inventory",
+  managers: "Managers",
+  history: "Snapshot History",
+  cluster: "Cluster Detail"
+};
+
+export function App() {
+  const [session, setSession] = useState<SessionResponse>({ authenticated: false });
+  const [authStatus, setAuthStatus] = useState<"checking" | "ready">("checking");
+  const [activePage, setActivePage] = useState<PageId>(() => pageFromHash());
+  const [routeHash, setRouteHash] = useState(() => window.location.hash);
+  const [loginError, setLoginError] = useState("");
+  const [loginPending, setLoginPending] = useState(false);
+  const [managers, setManagers] = useState<Manager[]>([]);
+  const [managerError, setManagerError] = useState("");
+  const [managerMessage, setManagerMessage] = useState("");
+  const [editingManager, setEditingManager] = useState<Manager | undefined>();
+  const [testCollectionResult, setTestCollectionResult] = useState<ManagerTestCollectionResult | undefined>();
+  const [testCollectionPending, setTestCollectionPending] = useState(false);
+  const [collectionBusyId, setCollectionBusyId] = useState<string | undefined>();
+  const [collectedSnapshot, setCollectedSnapshot] = useState<SnapshotDetail | undefined>();
+  const [snapshots, setSnapshots] = useState<SnapshotSummary[]>([]);
+  const [selectedSnapshot, setSelectedSnapshot] = useState<SnapshotDetail | undefined>();
+  const [snapshotFilters, setSnapshotFilters] = useState<SnapshotFilters>({ managerId: "", status: "" });
+  const [snapshotError, setSnapshotError] = useState("");
+  const [dashboard, setDashboard] = useState<DashboardResponse | undefined>();
+  const [dashboardError, setDashboardError] = useState("");
+  const [clusterDetail, setClusterDetail] = useState<DashboardClusterDetail | undefined>();
+  const [clusterError, setClusterError] = useState("");
+  const [clusterLoading, setClusterLoading] = useState(false);
+  const [inventory, setInventory] = useState<SnapshotVmInventoryResponse | undefined>();
+  const [inventoryFilters, setInventoryFilters] = useState<SnapshotVmInventoryFilters>({ page: 1, pageSize: 100 });
+  const [inventoryError, setInventoryError] = useState("");
+  const [inventoryLoading, setInventoryLoading] = useState(false);
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setActivePage(pageFromHash());
+      setRouteHash(window.location.hash);
+    };
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
+
+  useEffect(() => {
+    if (!session.authenticated) {
+      setManagers([]);
+      setSnapshots([]);
+      setSelectedSnapshot(undefined);
+      setDashboard(undefined);
+      setClusterDetail(undefined);
+      setInventory(undefined);
+      return;
+    }
+
+    listManagers()
+      .then(setManagers)
+      .catch((error: unknown) => {
+        setManagerError(error instanceof Error ? error.message : "Manager list failed");
+      });
+    listSnapshots()
+      .then(setSnapshots)
+      .catch((error: unknown) => {
+        setSnapshotError(error instanceof Error ? error.message : "Snapshot list failed");
+      });
+    getDashboard()
+      .then(setDashboard)
+      .catch((error: unknown) => {
+        setDashboardError(error instanceof Error ? error.message : "Dashboard failed");
+      });
+    void loadInventory(inventoryFilters);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.authenticated]);
+
+  useEffect(() => {
+    if (!session.authenticated || activePage !== "cluster") {
+      setClusterDetail(undefined);
+      setClusterError("");
+      setClusterLoading(false);
+      return;
+    }
+
+    const params = clusterParamsFromHash(routeHash);
+    if (!params) {
+      setClusterDetail(undefined);
+      setClusterError("Cluster not found");
+      setClusterLoading(false);
+      return;
+    }
+
+    let active = true;
+    setClusterLoading(true);
+    setClusterError("");
+    getDashboardCluster(params.managerId, params.clusterId)
+      .then((cluster) => {
+        if (active) {
+          setClusterDetail(cluster);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setClusterDetail(undefined);
+          setClusterError(error instanceof Error ? error.message : "Cluster detail failed");
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setClusterLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [activePage, routeHash, session.authenticated]);
+
+  useEffect(() => {
+    let active = true;
+    getSession()
+      .then((data) => {
+        if (active) {
+          setSession(data);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setAuthStatus("ready");
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function handleLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setLoginPending(true);
+    setLoginError("");
+
+    try {
+      const nextSession = await login(String(form.get("username") ?? ""), String(form.get("password") ?? ""));
+      setSession(nextSession);
+      event.currentTarget.reset();
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "Login failed");
+    } finally {
+      setLoginPending(false);
+    }
+  }
+
+  async function handleLogout() {
+    setSession(await logout());
+    setEditingManager(undefined);
+    setManagers([]);
+    setSnapshots([]);
+    setSelectedSnapshot(undefined);
+    setDashboard(undefined);
+    setClusterDetail(undefined);
+    setInventory(undefined);
+  }
+
+  async function loadInventory(filters: SnapshotVmInventoryFilters) {
+    setInventoryLoading(true);
+    setInventoryError("");
+    try {
+      setInventory(await getSnapshotVmInventory(filters));
+    } catch (error) {
+      setInventoryError(error instanceof Error ? error.message : "Inventory failed");
+    } finally {
+      setInventoryLoading(false);
+    }
+  }
+
+  async function handleInventoryFilter(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const nextFilters = {
+      search: String(form.get("search") ?? ""),
+      managerId: String(form.get("managerId") ?? ""),
+      clusterId: String(form.get("clusterId") ?? ""),
+      powerState: String(form.get("powerState") ?? ""),
+      environment: String(form.get("environment") ?? ""),
+      page: 1,
+      pageSize: inventoryFilters.pageSize ?? 100
+    };
+    setInventoryFilters(nextFilters);
+    await loadInventory(nextFilters);
+  }
+
+  async function clearInventoryFilters() {
+    const nextFilters = { page: 1, pageSize: inventoryFilters.pageSize ?? 100 };
+    setInventoryFilters(nextFilters);
+    await loadInventory(nextFilters);
+  }
+
+  async function handleManagerSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const submitter = event.nativeEvent instanceof SubmitEvent ? event.nativeEvent.submitter : undefined;
+    const action = submitter instanceof HTMLButtonElement ? submitter.value : "save";
+    const { input, username, password } = managerInputFromForm(formElement);
+    if (action === "test") {
+      await handleManagerTestCollection(input);
+      return;
+    }
+
+    setManagerError("");
+    setManagerMessage("");
+    setTestCollectionResult(undefined);
+    try {
+      const saved = editingManager
+        ? await updateManager(editingManager.id, input)
+        : await createManager({ ...input, username, password });
+      setManagers((current) => {
+        const others = current.filter((manager) => manager.id !== saved.id);
+        return [...others, saved].sort((left, right) => left.name.localeCompare(right.name));
+      });
+      setDashboard(await getDashboard());
+      setManagerMessage(editingManager ? "Manager updated" : "Manager added");
+      setEditingManager(undefined);
+      formElement.reset();
+    } catch (error) {
+      setManagerError(error instanceof Error ? error.message : "Manager save failed");
+    }
+  }
+
+  async function handleManagerTestCollection(input: ManagerInput) {
+    setManagerError("");
+    setManagerMessage("");
+    setTestCollectionResult(undefined);
+    setTestCollectionPending(true);
+
+    try {
+      const result = await testManagerCollection({
+        managerId: editingManager?.id,
+        ...input
+      });
+      setTestCollectionResult(result);
+      setManagerMessage(`Test collection ${result.status}; no snapshot saved`);
+    } catch (error) {
+      setManagerError(error instanceof Error ? error.message : "Test collection failed");
+    } finally {
+      setTestCollectionPending(false);
+    }
+  }
+
+  async function handleManagerDelete(id: string) {
+    setManagerError("");
+    setManagerMessage("");
+    try {
+      await deleteManager(id);
+      setManagers((current) => current.filter((manager) => manager.id !== id));
+      if (editingManager?.id === id) {
+        setEditingManager(undefined);
+      }
+      setDashboard(await getDashboard());
+      setManagerMessage("Manager removed");
+    } catch (error) {
+      setManagerError(error instanceof Error ? error.message : "Manager delete failed");
+    }
+  }
+
+  async function handleCollect(manager: Manager) {
+    setManagerError("");
+    setManagerMessage("");
+    setCollectedSnapshot(undefined);
+    setCollectionBusyId(manager.id);
+
+    try {
+      const saved = await collectManager(manager.id);
+      setCollectedSnapshot(saved);
+      setSelectedSnapshot(saved);
+      setSnapshots((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
+      setDashboard(await getDashboard());
+      setManagerMessage(`Collection ${saved.status}; snapshot saved`);
+    } catch (error) {
+      setManagerError(error instanceof Error ? error.message : "Collection failed");
+    } finally {
+      setCollectionBusyId(undefined);
+    }
+  }
+
+  async function handleCollectAll() {
+    setManagerError("");
+    setManagerMessage("");
+    setCollectedSnapshot(undefined);
+    setCollectionBusyId("all");
+
+    try {
+      const savedSnapshots = await collectAllManagers();
+      const savedIds = new Set(savedSnapshots.map((snapshot) => snapshot.id));
+      setSnapshots((current) => [...savedSnapshots, ...current.filter((item) => !savedIds.has(item.id))]);
+      setSelectedSnapshot(savedSnapshots[0]);
+      setCollectedSnapshot(savedSnapshots[0]);
+      setDashboard(await getDashboard());
+      setManagerMessage(savedSnapshots.length > 0 ? `Collected ${savedSnapshots.length} enabled manager(s)` : "No enabled managers collected");
+    } catch (error) {
+      setManagerError(error instanceof Error ? error.message : "Collection failed");
+    } finally {
+      setCollectionBusyId(undefined);
+    }
+  }
+
+  async function handleSnapshotSelect(id: string) {
+    setSnapshotError("");
+    try {
+      setSelectedSnapshot(await getSnapshot(id));
+    } catch (error) {
+      setSnapshotError(error instanceof Error ? error.message : "Snapshot detail failed");
+    }
+  }
+
+  function handleSnapshotFilterChange(event: ChangeEvent<HTMLSelectElement>) {
+    const { name, value } = event.currentTarget;
+    setSnapshotFilters((current) => ({ ...current, [name]: value }));
+  }
+
+  const latestSnapshot = snapshots[0];
+  const dashboardCards = dashboard
+    ? [
+        { label: "Managers", value: dashboard.totals.managers, icon: Server },
+        { label: "Clusters", value: dashboard.totals.clusters, icon: Database },
+        { label: "Hosts", value: dashboard.totals.hosts, icon: HardDrive },
+        { label: "VMs", value: dashboard.totals.vms, icon: Activity },
+        { label: "Storage", value: dashboard.totals.storageDomains, icon: Database },
+        { label: "Disks", value: dashboard.totals.disks, icon: HardDrive },
+        { label: "Networks", value: dashboard.totals.networks, icon: Network }
+      ]
+    : [];
+  const activeInventoryFilterCount = countActiveInventoryFilters(inventoryFilters);
+  const inventoryLatestCollectedAt = latestInventoryCollectedAt(inventory?.rows);
+  const filteredSnapshots = snapshots.filter((snapshot) => matchesSnapshotFilters(snapshot, snapshotFilters));
+  const snapshotManagerOptions = uniqueSnapshotManagers(snapshots);
+  const snapshotStatusOptions = uniqueSnapshotStatuses(snapshots);
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar" aria-label="Primary navigation">
+        <div className="sidebar-brand">
+          <div className="brand-mark">
+            <Database aria-hidden="true" size={17} />
+          </div>
+          <div>
+            <strong>ovirt-inventory</strong>
+            <span>Manager snapshots</span>
+          </div>
+        </div>
+
+        <nav className="sidebar-nav">
+          <a href="#dashboard" aria-current={activePage === "dashboard" ? "page" : undefined}>
+            <LayoutDashboard aria-hidden="true" size={17} />
+            Dashboard
+          </a>
+          <a href="#inventory" aria-current={activePage === "inventory" ? "page" : undefined}>
+            <Activity aria-hidden="true" size={17} />
+            Inventory
+          </a>
+          <a href="#managers" aria-current={activePage === "managers" ? "page" : undefined}>
+            <Server aria-hidden="true" size={17} />
+            Managers
+          </a>
+          <a href="#history" aria-current={activePage === "history" ? "page" : undefined}>
+            <History aria-hidden="true" size={17} />
+            History
+          </a>
+        </nav>
+      </aside>
+
+      <div className="main-shell">
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">oVirt manager inventory</p>
+            <h1 id="page-title">{session.authenticated ? pageTitles[activePage] : "Login"}</h1>
+          </div>
+          <div className="topbar-actions">
+            {session.authenticated ? (
+              <button className="icon-button" type="button" onClick={handleLogout} title="Logout" aria-label="Logout">
+                <LogOut aria-hidden="true" size={17} />
+              </button>
+            ) : (
+              <span className="state-pill">Login required</span>
+            )}
+          </div>
+        </header>
+
+        <main className="content-shell" aria-labelledby="page-title">
+          {authStatus === "checking" && <p className="muted">Checking session</p>}
+
+          {authStatus === "ready" && !session.authenticated && (
+            <section className="login-panel" aria-label="Login">
+              <form className="login-form" onSubmit={handleLogin}>
+                <label>
+                  Username
+                  <input name="username" autoComplete="username" required />
+                </label>
+                <label>
+                  Password
+                  <input name="password" type="password" autoComplete="current-password" required />
+                </label>
+                <button className="button" type="submit" disabled={loginPending}>
+                  <LogIn aria-hidden="true" size={17} />
+                  {loginPending ? "Signing in" : "Login"}
+                </button>
+                {loginError && (
+                  <p className="form-error" role="alert">
+                    {loginError}
+                  </p>
+                )}
+              </form>
+            </section>
+          )}
+
+          {session.authenticated && activePage === "dashboard" && (
+            <section className="dashboard-panel" aria-labelledby="dashboard">
+              <div className="section-heading with-actions">
+                <div>
+                  <LayoutDashboard aria-hidden="true" size={20} />
+                  <div>
+                    <h2 id="dashboard">Dashboard</h2>
+                    <p>
+                      {latestSnapshot
+                        ? `Latest snapshot: ${latestSnapshot.managerName} at ${new Date(latestSnapshot.collectedAt).toLocaleString()}`
+                        : "No inventory snapshots saved yet"}
+                    </p>
+                  </div>
+                </div>
+                <span className="state-pill">{snapshots.length} snapshots</span>
+              </div>
+              {dashboardError && (
+                <p className="form-error" role="alert">
+                  {dashboardError}
+                </p>
+              )}
+              {dashboard && (
+                <>
+                  <section className="inventory-grid kpi-grid" aria-label="Inventory totals">
+                    {dashboardCards.map(({ label, value, icon: Icon }) => (
+                      <article className="metric compact" key={label}>
+                        <span className="metric-icon">
+                          <Icon aria-hidden="true" size={18} />
+                        </span>
+                        <div>
+                          <span className="metric-label">{label}</span>
+                          <strong>{value}</strong>
+                        </div>
+                      </article>
+                    ))}
+                  </section>
+                  <ClusterTable clusters={dashboard.clusters} managers={dashboard.managers} />
+                </>
+              )}
+            </section>
+          )}
+
+          {session.authenticated && activePage === "cluster" && (
+            <section className="cluster-detail-panel" aria-labelledby="cluster-detail">
+              <div className="section-heading with-actions">
+                <div>
+                  <Server aria-hidden="true" size={20} />
+                  <div>
+                    <h2 id="cluster-detail">{clusterDetail?.name ?? "Cluster Detail"}</h2>
+                    <p>
+                      {clusterDetail
+                        ? `${clusterDetail.managerName} at ${new Date(clusterDetail.collectedAt).toLocaleString()}`
+                        : "Loading cluster inventory"}
+                    </p>
+                  </div>
+                </div>
+                <a className="button secondary" href="#dashboard">
+                  <ArrowLeft aria-hidden="true" size={16} />
+                  Dashboard
+                </a>
+              </div>
+              {clusterError && (
+                <p className="form-error" role="alert">
+                  {clusterError}
+                </p>
+              )}
+              {clusterLoading && <p className="muted">Loading cluster inventory</p>}
+              {clusterDetail && (
+                <>
+                  <section className="inventory-grid compact-grid" aria-label="Cluster totals">
+                    <article className="metric compact">
+                      <span className="metric-icon">
+                        <HardDrive aria-hidden="true" size={18} />
+                      </span>
+                      <div>
+                        <span className="metric-label">Nodes</span>
+                        <strong>{clusterDetail.hostCount}</strong>
+                      </div>
+                    </article>
+                    <article className="metric compact">
+                      <span className="metric-icon">
+                        <Activity aria-hidden="true" size={18} />
+                      </span>
+                      <div>
+                        <span className="metric-label">VMs</span>
+                        <strong>{clusterDetail.vmCount}</strong>
+                      </div>
+                    </article>
+                    <article className="metric compact">
+                      <span className="metric-icon">
+                        <Database aria-hidden="true" size={18} />
+                      </span>
+                      <div>
+                        <span className="metric-label">Storage Domains</span>
+                        <strong>{clusterDetail.storageDomainCount}</strong>
+                      </div>
+                    </article>
+                  </section>
+                  <ClusterVmTable vms={clusterDetail.vms} />
+                </>
+              )}
+            </section>
+          )}
+
+          {session.authenticated && activePage === "inventory" && (
+            <section className="inventory-panel" aria-labelledby="inventory-title">
+              <div className="section-heading with-actions">
+                <div>
+                  <Activity aria-hidden="true" size={20} />
+                  <div>
+                    <h2 id="inventory-title">Inventory</h2>
+                    <p>{inventory ? `${inventory.total} VM records from latest snapshots` : "Latest snapshot VM inventory"}</p>
+                  </div>
+                </div>
+                <div className="topbar-actions">
+                  <a className="button secondary" href={snapshotVmInventoryExportUrl("csv", inventoryFilters)}>
+                    <Download aria-hidden="true" size={16} />
+                    Export CSV
+                  </a>
+                  <a className="button secondary" href={snapshotVmInventoryExportUrl("pdf", inventoryFilters)}>
+                    <Download aria-hidden="true" size={16} />
+                    Export PDF
+                  </a>
+                </div>
+              </div>
+              <div className="inventory-summary-row" aria-label="Inventory result summary">
+                <span className="state-pill">{inventory ? `${inventory.total} VMs` : "Loading VMs"}</span>
+                <span className="state-pill">{activeInventoryFilterCount} active filters</span>
+                <span className="state-pill">
+                  {inventoryLatestCollectedAt ? `Latest: ${new Date(inventoryLatestCollectedAt).toLocaleString()}` : "No collection timestamp"}
+                </span>
+              </div>
+              <form className="inventory-filter-form" key={inventoryFilterKey(inventoryFilters)} onSubmit={(event) => void handleInventoryFilter(event)}>
+                <label>
+                  <span>Search</span>
+                  <input name="search" defaultValue={inventoryFilters.search ?? ""} placeholder="VM, host, OS, IP" />
+                </label>
+                <label>
+                  <span>Manager</span>
+                  <select name="managerId" defaultValue={inventoryFilters.managerId ?? ""}>
+                    <option value="">All</option>
+                    {inventory?.filterOptions.managers.map((manager) => (
+                      <option key={manager.value} value={manager.value}>
+                        {manager.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Cluster</span>
+                  <select name="clusterId" defaultValue={inventoryFilters.clusterId ?? ""}>
+                    <option value="">All</option>
+                    {inventory?.filterOptions.clusters.map((cluster) => (
+                      <option key={cluster.value} value={cluster.value}>
+                        {cluster.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Power State</span>
+                  <select name="powerState" defaultValue={inventoryFilters.powerState ?? ""}>
+                    <option value="">All</option>
+                    {inventory?.filterOptions.powerStates.map((state) => (
+                      <option key={state} value={state}>
+                        {state}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Environment</span>
+                  <select name="environment" defaultValue={inventoryFilters.environment ?? ""}>
+                    <option value="">All</option>
+                    {inventory?.filterOptions.environments.map((environment) => (
+                      <option key={environment} value={environment}>
+                        {environment}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="manager-actions">
+                  <button className="button" type="submit" disabled={inventoryLoading}>
+                    Filter
+                  </button>
+                  <button className="button secondary" type="button" onClick={() => void clearInventoryFilters()}>
+                    Clear
+                  </button>
+                </div>
+              </form>
+              {inventoryError && (
+                <p className="form-error" role="alert">
+                  {inventoryError}
+                </p>
+              )}
+              {inventoryLoading && <p className="muted">Loading inventory</p>}
+              {inventory && <InventoryTable inventory={inventory} />}
+            </section>
+          )}
+
+          {session.authenticated && activePage === "managers" && (
+            <section className="manager-panel" aria-labelledby="managers">
+              <div className="section-heading with-actions">
+                <div>
+                  <Server aria-hidden="true" size={20} />
+                  <div>
+                    <h2 id="managers">Managers</h2>
+                    <p>Save encrypted oVirt credentials and manually trigger backend collection.</p>
+                  </div>
+                </div>
+                <button className="button" type="button" disabled={Boolean(collectionBusyId)} onClick={() => void handleCollectAll()}>
+                  <Play aria-hidden="true" size={16} />
+                  Collect All
+                </button>
+              </div>
+              <form className="manager-form" key={editingManager?.id ?? "new-manager"} onSubmit={handleManagerSubmit}>
+                <div className="form-card-header">
+                  <div>
+                    <h3>{editingManager ? "Edit Manager" : "Add Manager"}</h3>
+                    <p>{editingManager ? "Update connection details or test saved credentials." : "Register an oVirt Manager connection before collecting inventory."}</p>
+                  </div>
+                  {editingManager && <span className="state-pill">Editing {editingManager.name}</span>}
+                </div>
+                <div className="manager-fields">
+                  <label>
+                    <span>Name</span>
+                    <input name="name" defaultValue={editingManager?.name ?? ""} required />
+                  </label>
+                  <label>
+                    <span>URL</span>
+                    <input name="url" defaultValue={editingManager?.url ?? ""} placeholder="https://manager/ovirt-engine" required />
+                  </label>
+                  <label>
+                    <span>Username</span>
+                    <input name="username" autoComplete="off" required={!editingManager} />
+                  </label>
+                  <label>
+                    <span>Password</span>
+                    <input name="password" type="password" autoComplete="off" required={!editingManager} />
+                  </label>
+                </div>
+                <div className="manager-option-row">
+                  <label className="toggle-row">
+                    <input name="enabled" type="checkbox" defaultChecked={editingManager?.enabled ?? true} />
+                    Enabled
+                  </label>
+                  <label className="toggle-row tls-toggle">
+                    <input name="ignoreTls" type="checkbox" defaultChecked={editingManager?.ignoreTls ?? false} />
+                    Ignore TLS
+                  </label>
+                </div>
+                <div className="manager-actions form-actions">
+                  <button className="button secondary" type="submit" name="managerAction" value="test" disabled={testCollectionPending}>
+                    <Play aria-hidden="true" size={16} />
+                    {testCollectionPending ? "Testing" : "Test Collection"}
+                  </button>
+                  <button className="button" type="submit" name="managerAction" value="save" disabled={testCollectionPending}>
+                    {editingManager ? "Save" : "Add"}
+                  </button>
+                  {editingManager && (
+                    <button className="button secondary" type="button" disabled={testCollectionPending} onClick={() => setEditingManager(undefined)}>
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </form>
+              {managerError && (
+                <p className="form-error" role="alert">
+                  {managerError}
+                </p>
+              )}
+              {managerMessage && <p className="form-success">{managerMessage}</p>}
+              {testCollectionResult && (
+                <div className={`collection-panel status-panel ${statusClass(testCollectionResult.status)}`} aria-live="polite">
+                  <div className="section-heading compact-heading">
+                    <Clock aria-hidden="true" size={18} />
+                    <h3>Test Collection</h3>
+                  </div>
+                  <dl className="snapshot-summary">
+                    <div>
+                      <dt>Status</dt>
+                      <dd>{testCollectionResult.status}</dd>
+                    </div>
+                    <div>
+                      <dt>Collected</dt>
+                      <dd>{new Date(testCollectionResult.collectedAt).toLocaleString()}</dd>
+                    </div>
+                    <div>
+                      <dt>Resources</dt>
+                      <dd>{formatResourceCounts(testCollectionResult.resourceCounts)}</dd>
+                    </div>
+                    <div>
+                      <dt>Issues</dt>
+                      <dd>
+                        {testCollectionResult.warningsCount} warnings, {testCollectionResult.errorsCount} errors
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+              )}
+              <div className="manager-list" aria-label="Saved managers">
+                {managers.length === 0 && <p className="empty-state">No managers saved yet</p>}
+                {managers.map((manager) => (
+                  <article className="manager-row" key={manager.id}>
+                    <div>
+                      <strong>{manager.name}</strong>
+                      <span>{manager.url}</span>
+                    </div>
+                    <span className={`state-pill ${manager.enabled ? "status-success" : "status-muted"}`}>{manager.enabled ? "Enabled" : "Disabled"}</span>
+                    {manager.ignoreTls && <span className="state-pill status-warning">Ignore TLS</span>}
+                    <span className="state-pill">{manager.credentialStatus}</span>
+                    <button
+                      className="button secondary"
+                      type="button"
+                      disabled={Boolean(collectionBusyId) || !manager.enabled}
+                      onClick={() => void handleCollect(manager)}
+                    >
+                      <Play aria-hidden="true" size={16} />
+                      Collect
+                    </button>
+                    <button className="button secondary" type="button" onClick={() => setEditingManager(manager)}>
+                      Edit
+                    </button>
+                    <button className="button danger" type="button" onClick={() => void handleManagerDelete(manager.id)}>
+                      Remove
+                    </button>
+                  </article>
+                ))}
+              </div>
+              {(collectionBusyId || collectedSnapshot) && (
+                <div className="collection-panel" aria-live="polite">
+                  <div className="section-heading compact-heading">
+                    <Clock aria-hidden="true" size={18} />
+                    <h3>Collection</h3>
+                  </div>
+                  {collectionBusyId && <span className="state-pill">backend: running</span>}
+                  {collectedSnapshot && (
+                    <dl className="snapshot-summary">
+                      <div>
+                        <dt>Status</dt>
+                        <dd>{collectedSnapshot.status}</dd>
+                      </div>
+                      <div>
+                        <dt>Collected</dt>
+                        <dd>{new Date(collectedSnapshot.collectedAt).toLocaleString()}</dd>
+                      </div>
+                      <div>
+                        <dt>Resources</dt>
+                        <dd>{formatResourceCounts(collectedSnapshot.resourceCounts)}</dd>
+                      </div>
+                      <div>
+                        <dt>Errors</dt>
+                        <dd>{collectedSnapshot.errors.length}</dd>
+                      </div>
+                    </dl>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
+
+          {session.authenticated && activePage === "history" && (
+            <section className="snapshot-panel-page" aria-labelledby="history">
+              <div className="section-heading">
+                <History aria-hidden="true" size={20} />
+                <div>
+                  <h2 id="history">Snapshot History</h2>
+                  <p>Review saved inventory points and export the selected snapshot to Excel.</p>
+                </div>
+              </div>
+              {snapshotError && (
+                <p className="form-error" role="alert">
+                  {snapshotError}
+                </p>
+              )}
+              <form className="history-filter-form" aria-label="Snapshot filters">
+                <label>
+                  <span>Manager</span>
+                  <select name="managerId" value={snapshotFilters.managerId} onChange={handleSnapshotFilterChange}>
+                    <option value="">All</option>
+                    {snapshotManagerOptions.map((manager) => (
+                      <option key={manager.value} value={manager.value}>
+                        {manager.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Status</span>
+                  <select name="status" value={snapshotFilters.status} onChange={handleSnapshotFilterChange}>
+                    <option value="">All</option>
+                    {snapshotStatusOptions.map((status) => (
+                      <option key={status} value={status}>
+                        {status}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </form>
+              <div className="snapshot-history">
+                <div className="snapshot-list">
+                  {filteredSnapshots.length === 0 && <p className="empty-state">No snapshots match the current filters</p>}
+                  {filteredSnapshots.map((snapshot) => (
+                    <button className="snapshot-button" key={snapshot.id} type="button" onClick={() => void handleSnapshotSelect(snapshot.id)}>
+                      <span className={`snapshot-icon ${statusClass(snapshot.status)}`}>
+                        <SnapshotStatusIcon status={snapshot.status} />
+                      </span>
+                      <span>
+                        <strong>{snapshot.managerName}</strong>
+                        <small>
+                          {snapshot.status} at {new Date(snapshot.collectedAt).toLocaleString()}
+                        </small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                {selectedSnapshot ? (
+                  <div className="snapshot-detail">
+                    <div className="snapshot-detail-header">
+                      <div>
+                        <h3>{selectedSnapshot.managerName}</h3>
+                        <p className="muted">{selectedSnapshot.managerUrl}</p>
+                      </div>
+                      <a className="button export-link" href={`/api/exports/excel?snapshotId=${encodeURIComponent(selectedSnapshot.id)}`}>
+                        <Download aria-hidden="true" size={16} />
+                        Export Excel
+                      </a>
+                    </div>
+                    <dl className="snapshot-summary">
+                      <div>
+                        <dt>Status</dt>
+                        <dd>{selectedSnapshot.status}</dd>
+                      </div>
+                      <div>
+                        <dt>Collected</dt>
+                        <dd>{new Date(selectedSnapshot.collectedAt).toLocaleString()}</dd>
+                      </div>
+                      <div>
+                        <dt>Resources</dt>
+                        <dd>{formatResourceCounts(selectedSnapshot.resourceCounts)}</dd>
+                      </div>
+                      <div>
+                        <dt>Issues</dt>
+                        <dd>
+                          {selectedSnapshot.warningsCount} warnings, {selectedSnapshot.errorsCount} errors
+                        </dd>
+                      </div>
+                    </dl>
+                  </div>
+                ) : (
+                  <div className="snapshot-detail empty-detail">
+                    <History aria-hidden="true" size={22} />
+                    <h3>Select a snapshot to view details.</h3>
+                    <p className="muted">Snapshot details, issue counts, and Excel export appear here after selection.</p>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function ClusterTable({
+  clusters,
+  managers
+}: {
+  clusters: DashboardClusterSummary[];
+  managers: DashboardResponse["managers"];
+}) {
+  const managersById = new Map(managers.map((manager) => [manager.id, manager]));
+  return (
+    <section className="table-card" aria-labelledby="cluster-table-title">
+      <div className="table-title">
+        <h3 id="cluster-table-title">Clusters</h3>
+      </div>
+      {clusters.length === 0 ? (
+        <p className="empty-state">No clusters collected yet</p>
+      ) : (
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th scope="col">Cluster</th>
+                <th scope="col">Manager</th>
+                <th scope="col">Data Center</th>
+                <th scope="col">Nodes</th>
+                <th scope="col">VMs</th>
+                <th scope="col">Storage Domains</th>
+                <th scope="col">Version</th>
+                <th scope="col">Freshness</th>
+                <th scope="col">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {clusters.map((cluster) => {
+                const manager = managersById.get(cluster.managerId);
+                return (
+                  <tr key={`${cluster.managerId}:${cluster.clusterId}`}>
+                    <td>
+                      <a className="table-link" href={clusterHash(cluster.managerId, cluster.clusterId)}>
+                        {cluster.name}
+                      </a>
+                    </td>
+                    <td>{cluster.managerName}</td>
+                    <td>{cluster.dataCenterName ?? cluster.dataCenterId ?? "-"}</td>
+                    <td>{cluster.hostCount}</td>
+                    <td>{cluster.vmCount}</td>
+                    <td>{cluster.storageDomainCount}</td>
+                    <td>{cluster.version ?? "-"}</td>
+                    <td>{manager?.freshness ? new Date(manager.freshness).toLocaleString() : new Date(cluster.collectedAt).toLocaleString()}</td>
+                    <td>
+                      <StatusPill status={manager?.lastStatus ?? "success"} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function InventoryTable({ inventory }: { inventory: SnapshotVmInventoryResponse }) {
+  return (
+    <section className="table-card" aria-labelledby="inventory-table-title">
+      <div className="table-title">
+        <h3 id="inventory-table-title">VM Details</h3>
+      </div>
+      <div className="table-scroll">
+        <table className="data-table extra-wide-table">
+          <thead>
+            <tr>
+              <th scope="col">Manager</th>
+              <th scope="col">Cluster</th>
+              <th scope="col">VM Name</th>
+              <th scope="col">Environment</th>
+              <th scope="col">Power State</th>
+              <th scope="col">Host</th>
+              <th scope="col">Guest OS</th>
+              <th scope="col">IP Address</th>
+              <th scope="col">vCPU Count</th>
+              <th scope="col">Allocated RAM</th>
+              <th scope="col">Storage Allocated / Used</th>
+              <th scope="col">Collected</th>
+            </tr>
+          </thead>
+          <tbody>
+            {inventory.rows.length === 0 ? (
+              <tr>
+                <td className="empty-table-cell" colSpan={12}>
+                  No VMs match the current filters
+                </td>
+              </tr>
+            ) : (
+              inventory.rows.map((vm) => (
+                <tr key={`${vm.managerId}:${vm.vmId}`}>
+                  <td>{vm.managerName}</td>
+                  <td>{vm.clusterName ?? "-"}</td>
+                  <td>{vm.name}</td>
+                  <td>{vm.environment ?? "-"}</td>
+                  <td>{vm.powerState ?? "-"}</td>
+                  <td>{vm.host ?? "-"}</td>
+                  <td>{vm.guestOs ?? "-"}</td>
+                  <td>{vm.ipAddress ?? "-"}</td>
+                  <td>{vm.vcpuCount ?? "-"}</td>
+                  <td>{formatMemory(vm.allocatedRamMiB)}</td>
+                  <td>{formatVmStorage(vm)}</td>
+                  <td>{new Date(vm.collectedAt).toLocaleString()}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function ClusterVmTable({ vms }: { vms: DashboardClusterVm[] }) {
+  return (
+    <section className="table-card" aria-labelledby="cluster-vm-table-title">
+      <div className="table-title">
+        <h3 id="cluster-vm-table-title">VMs</h3>
+      </div>
+      <div className="table-scroll">
+        <table className="data-table wide-table">
+          <thead>
+            <tr>
+              <th scope="col">VM Name</th>
+              <th scope="col">Environment</th>
+              <th scope="col">Power State</th>
+              <th scope="col">Host</th>
+              <th scope="col">Guest OS</th>
+              <th scope="col">IP Address</th>
+              <th scope="col">vCPU Count</th>
+              <th scope="col">Allocated RAM</th>
+              <th scope="col">Storage Allocated / Used</th>
+            </tr>
+          </thead>
+          <tbody>
+            {vms.length === 0 ? (
+              <tr>
+                <td className="empty-table-cell" colSpan={9}>
+                  No VMs collected for this cluster
+                </td>
+              </tr>
+            ) : (
+              vms.map((vm) => (
+                <tr key={vm.vmId}>
+                  <td>{vm.name}</td>
+                  <td>{vm.environment ?? "-"}</td>
+                  <td>{vm.powerState ?? "-"}</td>
+                  <td>{vm.host ?? "-"}</td>
+                  <td>{vm.guestOs ?? "-"}</td>
+                  <td>{vm.ipAddress ?? "-"}</td>
+                  <td>{vm.vcpuCount ?? "-"}</td>
+                  <td>{formatMemory(vm.allocatedRamMiB)}</td>
+                  <td>{formatStorage(vm)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function StatusPill({ status }: { status: SnapshotSummary["status"] }) {
+  return <span className={`state-pill ${statusClass(status)}`}>{status}</span>;
+}
+
+function SnapshotStatusIcon({ status }: { status: SnapshotSummary["status"] }) {
+  if (status === "success") {
+    return <CheckCircle2 aria-hidden="true" size={16} />;
+  }
+  if (status === "partial") {
+    return <AlertTriangle aria-hidden="true" size={16} />;
+  }
+  return <XCircle aria-hidden="true" size={16} />;
+}
+
+function formatResourceCounts(counts: SnapshotSummary["resourceCounts"]) {
+  return Object.entries(counts)
+    .map(([resource, count]) => `${formatResourceName(resource)}: ${count}`)
+    .join(", ");
+}
+
+function managerInputFromForm(formElement: HTMLFormElement): {
+  input: ManagerInput & { name: string; url: string };
+  username: string;
+  password: string;
+} {
+  const form = new FormData(formElement);
+  const username = String(form.get("username") ?? "");
+  const password = String(form.get("password") ?? "");
+  const input = {
+    name: String(form.get("name") ?? ""),
+    url: String(form.get("url") ?? ""),
+    enabled: form.get("enabled") === "on",
+    ignoreTls: form.get("ignoreTls") === "on",
+    ...(username || password ? { username, password } : {})
+  };
+
+  return { input, username, password };
+}
+
+function statusClass(status: SnapshotSummary["status"]) {
+  if (status === "success") {
+    return "status-success";
+  }
+  if (status === "partial") {
+    return "status-warning";
+  }
+  return "status-danger";
+}
+
+function countActiveInventoryFilters(filters: SnapshotVmInventoryFilters) {
+  return [filters.search, filters.managerId, filters.clusterId, filters.powerState, filters.environment].filter(Boolean).length;
+}
+
+function latestInventoryCollectedAt(rows: SnapshotVmInventoryRow[] | undefined) {
+  const times = (rows ?? []).map((row) => Date.parse(row.collectedAt)).filter((value) => Number.isFinite(value));
+  return times.length ? new Date(Math.max(...times)).toISOString() : undefined;
+}
+
+function matchesSnapshotFilters(snapshot: SnapshotSummary, filters: SnapshotFilters) {
+  return (!filters.managerId || snapshot.managerId === filters.managerId) && (!filters.status || snapshot.status === filters.status);
+}
+
+function uniqueSnapshotManagers(snapshots: SnapshotSummary[]) {
+  const managers = new Map<string, string>();
+  for (const snapshot of snapshots) {
+    if (!managers.has(snapshot.managerId)) {
+      managers.set(snapshot.managerId, snapshot.managerName);
+    }
+  }
+  return [...managers.entries()].map(([value, label]) => ({ value, label })).sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function uniqueSnapshotStatuses(snapshots: SnapshotSummary[]) {
+  return [...new Set(snapshots.map((snapshot) => snapshot.status))].sort();
+}
+
+function formatResourceName(resource: string) {
+  return resource.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function formatMemory(value: number | undefined) {
+  return value === undefined ? "-" : `${value.toLocaleString()} MiB`;
+}
+
+function formatStorage(vm: DashboardClusterVm) {
+  const allocated = formatGib(vm.storageAllocatedGiB);
+  const used = formatGib(vm.storageUsedGiB);
+  return allocated === "-" && used === "-" ? "-" : `${allocated} / ${used}`;
+}
+
+function formatVmStorage(vm: SnapshotVmInventoryRow) {
+  const allocated = formatGib(vm.storageAllocatedGiB);
+  const used = formatGib(vm.storageUsedGiB);
+  return allocated === "-" && used === "-" ? "-" : `${allocated} / ${used}`;
+}
+
+function inventoryFilterKey(filters: SnapshotVmInventoryFilters) {
+  return JSON.stringify(filters);
+}
+
+function formatGib(value: number | undefined) {
+  return value === undefined ? "-" : `${value.toLocaleString()} GiB`;
+}
+
+function clusterHash(managerId: string, clusterId: string) {
+  return `#cluster/${encodeURIComponent(managerId)}/${encodeURIComponent(clusterId)}`;
+}
+
+function clusterParamsFromHash(hash: string): { managerId: string; clusterId: string } | undefined {
+  const [page, managerId, clusterId] = hash.replace(/^#/, "").split("/");
+  if (page !== "cluster" || !managerId || !clusterId) {
+    return undefined;
+  }
+  return { managerId: decodeURIComponent(managerId), clusterId: decodeURIComponent(clusterId) };
+}
+
+function pageFromHash(): PageId {
+  const hash = window.location.hash.replace(/^#/, "");
+  if (hash.startsWith("cluster/")) {
+    return "cluster";
+  }
+  if (hash === "inventory") {
+    return "inventory";
+  }
+  if (hash === "managers" || hash === "manager-title") {
+    return "managers";
+  }
+  if (hash === "history" || hash === "snapshot-title") {
+    return "history";
+  }
+  return "dashboard";
+}

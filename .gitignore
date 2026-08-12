@@ -1,3 +1,16 @@
 .env.ovirt
 endpoints.json
 __pycache__/
+.DS_Store
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+.data/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*
+*.xlsx
