@@ -17,7 +17,7 @@ FROM node:22-bookworm-slim AS runtime
 
 ARG VERSION=dev
 
-LABEL org.opencontainers.image.source="https://github.com/dennis-au/ovirt-inventory"
+LABEL org.opencontainers.image.source="https://github.com/dennis-au/ovirt_stocktake"
 LABEL org.opencontainers.image.version="${VERSION}"
 LABEL org.opencontainers.image.description="oVirt/RHV inventory web app"
 

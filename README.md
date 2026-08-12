@@ -7,7 +7,7 @@
 The multi-architecture image is published to GitHub Container Registry:
 
 ```bash
-docker pull ghcr.io/dennis-au/ovirt-inventory:latest
+docker pull ghcr.io/dennis-au/ovirt_stocktake:latest
 ```
 
 Supported platforms:
@@ -18,7 +18,7 @@ Supported platforms:
 Release image:
 
 ```bash
-docker pull ghcr.io/dennis-au/ovirt-inventory:v0.1.0
+docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.0
 ```
 
 ## Quick Start
@@ -29,13 +29,13 @@ Create a persistent data directory and start the app:
 mkdir -p ./data
 
 docker run --rm \
-  --name ovirt-inventory \
+  --name ovirt-stocktake \
   -p 3000:3000 \
   -v "$PWD/data:/data" \
   -e OVIRT_INVENTORY_ENCRYPTION_KEY="replace-with-a-long-random-secret" \
   -e OVIRT_INVENTORY_SESSION_SECRET="replace-with-a-long-random-session-secret" \
   -e OVIRT_INVENTORY_ADMIN_PASSWORD_HASH="replace-with-a-generated-password-hash" \
-  ghcr.io/dennis-au/ovirt-inventory:latest
+  ghcr.io/dennis-au/ovirt_stocktake:latest
 ```
 
 Open the app at `http://localhost:3000`.
@@ -81,7 +81,7 @@ Build a multi-arch container image:
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t ghcr.io/dennis-au/ovirt-inventory:latest \
+  -t ghcr.io/dennis-au/ovirt_stocktake:latest \
   .
 ```
 
@@ -90,7 +90,7 @@ Push with Buildx:
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t ghcr.io/dennis-au/ovirt-inventory:latest \
+  -t ghcr.io/dennis-au/ovirt_stocktake:latest \
   --push \
   .
 ```
