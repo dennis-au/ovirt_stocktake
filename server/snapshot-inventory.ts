@@ -24,6 +24,8 @@ interface SnapshotVmInventoryQuery {
   page: number;
   pageSize: number;
   filters: SnapshotVmInventoryFilters;
+  sortBy?: SnapshotVmInventorySortKey;
+  sortDirection: SnapshotVmInventorySortDirection;
 }
 
 interface SnapshotVmInventoryFilters {
@@ -32,6 +34,8 @@ interface SnapshotVmInventoryFilters {
   clusterId?: string;
   powerState?: string;
   environment?: string;
+  sortBy?: SnapshotVmInventorySortKey;
+  sortDirection?: SnapshotVmInventorySortDirection;
 }
 
 export interface SnapshotVmInventoryRow {
@@ -51,11 +55,28 @@ export interface SnapshotVmInventoryRow {
   host?: string;
   guestOs?: string;
   ipAddress?: string;
+  ipAddresses?: string[];
   vcpuCount?: number;
   allocatedRamMiB?: number;
   storageAllocatedGiB?: number;
   storageUsedGiB?: number;
 }
+
+type SnapshotVmInventorySortKey =
+  | "managerName"
+  | "clusterName"
+  | "name"
+  | "powerState"
+  | "host"
+  | "guestOs"
+  | "ipAddress"
+  | "vcpuCount"
+  | "allocatedRamMiB"
+  | "storageAllocatedGiB"
+  | "storageUsedGiB"
+  | "collectedAt";
+
+type SnapshotVmInventorySortDirection = "asc" | "desc";
 
 export interface SnapshotVmInventoryResult {
   rows: SnapshotVmInventoryRow[];
@@ -71,21 +92,35 @@ export interface SnapshotVmInventoryResult {
   };
 }
 
-const inventoryColumns: Array<{ key: keyof SnapshotVmInventoryRow; title: string }> = [
+const inventoryColumns: Array<{ key: keyof SnapshotVmInventoryRow; title: string; format?: (row: SnapshotVmInventoryRow) => unknown }> = [
   { key: "managerName", title: "Manager" },
   { key: "clusterName", title: "Cluster" },
   { key: "name", title: "VM Name" },
-  { key: "environment", title: "Environment" },
   { key: "powerState", title: "Power State" },
   { key: "host", title: "Host" },
   { key: "guestOs", title: "Guest OS" },
-  { key: "ipAddress", title: "IP Address" },
+  { key: "ipAddress", title: "IP Addresses", format: (row) => row.ipAddresses?.join("; ") ?? row.ipAddress },
   { key: "vcpuCount", title: "vCPU Count" },
-  { key: "allocatedRamMiB", title: "Allocated RAM MiB" },
+  { key: "allocatedRamMiB", title: "Allocated RAM", format: (row) => formatMemory(row.allocatedRamMiB) },
   { key: "storageAllocatedGiB", title: "Storage Allocated GiB" },
   { key: "storageUsedGiB", title: "Storage Used GiB" },
   { key: "collectedAt", title: "Collected At" }
 ];
+
+const sortableColumns = new Set<SnapshotVmInventorySortKey>([
+  "managerName",
+  "clusterName",
+  "name",
+  "powerState",
+  "host",
+  "guestOs",
+  "ipAddress",
+  "vcpuCount",
+  "allocatedRamMiB",
+  "storageAllocatedGiB",
+  "storageUsedGiB",
+  "collectedAt"
+]);
 
 export function registerSnapshotInventoryRoutes(app: FastifyInstance, db: SqliteDatabase): void {
   app.get("/api/inventory/snapshot-vms", { preHandler: requireRole(roles.read) }, async (request) => ({
@@ -118,7 +153,7 @@ export function registerSnapshotInventoryRoutes(app: FastifyInstance, db: Sqlite
 
 export function querySnapshotVmInventory(db: SqliteDatabase, query: SnapshotVmInventoryQuery): SnapshotVmInventoryResult {
   const allRows = allLatestSnapshotVmRows(db);
-  const filteredRows = allRows.filter((row) => matchesFilters(row, query.filters));
+  const filteredRows = sortRows(allRows.filter((row) => matchesFilters(row, query.filters)), query.sortBy, query.sortDirection);
   const pageSize = Math.min(Math.max(query.pageSize, 1), 500);
   const page = Math.max(query.page, 1);
   const start = (page - 1) * pageSize;
@@ -128,7 +163,10 @@ export function querySnapshotVmInventory(db: SqliteDatabase, query: SnapshotVmIn
     page,
     pageSize,
     total: filteredRows.length,
-    filters: query.filters,
+    filters: {
+      ...query.filters,
+      ...(query.sortBy ? { sortBy: query.sortBy, sortDirection: query.sortDirection } : {})
+    },
     filterOptions: filterOptions(allRows)
   };
 }
@@ -169,6 +207,7 @@ function snapshotRows(manager: ManagerRow, snapshot: SnapshotRow): SnapshotVmInv
     const hostId = refId(vm.host);
     const host = hostId ? hosts.get(hostId) : undefined;
     const diskTotals = vmDiskTotals(vm);
+    const ipAddresses = vmIpAddresses(vm);
 
     return {
       managerId: manager.id,
@@ -186,7 +225,8 @@ function snapshotRows(manager: ManagerRow, snapshot: SnapshotRow): SnapshotVmInv
       powerState: stringValue(vm.status),
       host: refName(vm.host) ?? stringValue(host?.name) ?? hostId,
       guestOs: guestOs(vm),
-      ipAddress: firstIpAddress(vm),
+      ipAddress: ipAddresses[0],
+      ipAddresses,
       vcpuCount: vcpuCount(vm),
       allocatedRamMiB: allocatedRamMiB(vm),
       storageAllocatedGiB: diskTotals.allocated,
@@ -197,9 +237,12 @@ function snapshotRows(manager: ManagerRow, snapshot: SnapshotRow): SnapshotVmInv
 
 function parseSnapshotVmInventoryQuery(query: unknown): SnapshotVmInventoryQuery {
   const raw = query && typeof query === "object" ? (query as Record<string, unknown>) : {};
+  const sortBy = snapshotVmInventorySortKey(raw.sortBy);
   return {
     page: positiveInteger(raw.page, 1),
     pageSize: positiveInteger(raw.pageSize, 100),
+    sortBy,
+    sortDirection: stringValue(raw.sortDirection) === "desc" ? "desc" : "asc",
     filters: {
       search: stringValue(raw.search),
       managerId: stringValue(raw.managerId),
@@ -237,7 +280,8 @@ function matchesFilters(row: SnapshotVmInventoryRow, filters: SnapshotVmInventor
       row.powerState,
       row.host,
       row.guestOs,
-      row.ipAddress
+      row.ipAddress,
+      ...(row.ipAddresses ?? [])
     ]
       .filter(isString)
       .join(" ")
@@ -259,7 +303,7 @@ function filterOptions(rows: SnapshotVmInventoryRow[]): SnapshotVmInventoryResul
 function snapshotVmInventoryCsv(rows: SnapshotVmInventoryRow[]): string {
   return [
     inventoryColumns.map((column) => csvCell(column.title)).join(","),
-    ...rows.map((row) => inventoryColumns.map((column) => csvCell(row[column.key])).join(","))
+    ...rows.map((row) => inventoryColumns.map((column) => csvCell(column.format ? column.format(row) : row[column.key])).join(","))
   ].join("\n");
 }
 
@@ -275,7 +319,7 @@ function snapshotVmInventoryPdf(rows: SnapshotVmInventoryRow[], filters: Snapsho
     `Rows: ${rows.length}`,
     "",
     inventoryColumns.map((column) => column.title).join(" | "),
-    ...rows.map((row) => inventoryColumns.map((column) => String(row[column.key] ?? "-")).join(" | "))
+    ...rows.map((row) => inventoryColumns.map((column) => String((column.format ? column.format(row) : row[column.key]) ?? "-")).join(" | "))
   ];
   return simplePdf(lines);
 }
@@ -357,14 +401,14 @@ function guestOs(vm: InventoryResource): string | undefined {
   return combinedGuest || stringValue(recordValue(vm.os)?.type);
 }
 
-function firstIpAddress(vm: InventoryResource): string | undefined {
+function vmIpAddresses(vm: InventoryResource): string[] {
   const nicIps = childItems(vm.nics, "nic").flatMap((nic) =>
     childItems(nic.reported_devices ?? nic.reporteddevices, "reported_device").flatMap((device) =>
       childItems(device.ips, "ip").map((ip) => stringValue(ip.address))
     )
   );
   const guestInfoIps = childItems(recordValue(vm.guest_info)?.ips, "ip").map((ip) => stringValue(ip.address));
-  return [...nicIps, ...guestInfoIps].filter(isString)[0];
+  return uniqueOrderedStrings([...nicIps, ...guestInfoIps].filter(isString));
 }
 
 function vcpuCount(vm: InventoryResource): number | undefined {
@@ -481,6 +525,48 @@ function positiveInteger(value: unknown, fallback: number): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function snapshotVmInventorySortKey(value: unknown): SnapshotVmInventorySortKey | undefined {
+  const text = stringValue(value);
+  return text && sortableColumns.has(text as SnapshotVmInventorySortKey) ? (text as SnapshotVmInventorySortKey) : undefined;
+}
+
+function sortRows(
+  rows: SnapshotVmInventoryRow[],
+  sortBy: SnapshotVmInventorySortKey | undefined,
+  sortDirection: SnapshotVmInventorySortDirection
+): SnapshotVmInventoryRow[] {
+  if (!sortBy) {
+    return rows;
+  }
+  const direction = sortDirection === "desc" ? -1 : 1;
+  return [...rows].sort((left, right) => compareSortValues(left[sortBy], right[sortBy]) * direction);
+}
+
+function compareSortValues(left: unknown, right: unknown): number {
+  if (left === undefined || left === null) {
+    return right === undefined || right === null ? 0 : 1;
+  }
+  if (right === undefined || right === null) {
+    return -1;
+  }
+  if (typeof left === "number" && typeof right === "number") {
+    return left - right;
+  }
+  return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function formatMemory(value: number | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const gib = value / 1024;
+  return `${value.toLocaleString()} MiB (~${formatRoundedGib(gib)} GiB)`;
+}
+
+function formatRoundedGib(value: number): string {
+  return Number.isInteger(value) ? value.toLocaleString() : value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+}
+
 function bytesToGiB(value: unknown): number | undefined {
   const bytes = numberValue(value);
   return bytes === undefined ? undefined : Math.round((bytes / 1024 / 1024 / 1024) * 100) / 100;
@@ -509,6 +595,18 @@ function uniquePairs(items: Array<{ value: string; label: string }>): Array<{ va
 
 function uniqueStrings(items: Array<string | undefined>): string[] {
   return [...new Set(items.filter(isString))].sort((left, right) => left.localeCompare(right));
+}
+
+function uniqueOrderedStrings(items: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of items) {
+    if (!seen.has(item)) {
+      seen.add(item);
+      result.push(item);
+    }
+  }
+  return result;
 }
 
 function csvCell(value: unknown): string {

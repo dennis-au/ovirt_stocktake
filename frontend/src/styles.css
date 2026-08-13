@@ -379,9 +379,20 @@ select:focus {
   gap: 8px;
 }
 
+.saved-view-bar {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(180px, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+
 .inventory-filter-form {
   display: grid;
-  grid-template-columns: minmax(180px, 1.2fr) repeat(4, minmax(140px, 1fr)) auto;
+  grid-template-columns: minmax(180px, 1.2fr) repeat(3, minmax(140px, 1fr)) auto;
   align-items: end;
   gap: 12px;
   padding: 16px;
@@ -553,6 +564,12 @@ select:focus {
   letter-spacing: 0;
 }
 
+.table-hint {
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
 .table-scroll {
   overflow-x: auto;
 }
@@ -573,6 +590,19 @@ select:focus {
   min-width: 1480px;
 }
 
+.inventory-table-card {
+  width: 100%;
+}
+
+.inventory-table-scroll {
+  width: 100%;
+}
+
+.inventory-data-table {
+  min-width: 920px;
+  table-layout: fixed;
+}
+
 .data-table th,
 .data-table td {
   border-bottom: 1px solid var(--border);
@@ -588,6 +618,79 @@ select:focus {
   font-size: 0.76rem;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.inventory-data-table th {
+  padding: 0;
+}
+
+.inventory-data-table td {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.inventory-data-table .numeric-cell,
+.inventory-data-table .date-cell,
+.inventory-data-table .state-cell {
+  white-space: nowrap;
+}
+
+.inventory-data-table .ip-cell {
+  min-width: 160px;
+}
+
+.inventory-data-table .strong-cell {
+  font-weight: 750;
+}
+
+.column-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 10px;
+  color: #4b5563;
+}
+
+.column-header svg {
+  flex: 0 0 auto;
+  color: #9ca3af;
+}
+
+.dragging-column {
+  background: var(--secondary);
+}
+
+.sort-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  min-height: 30px;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 800;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.sort-button:hover,
+.sort-button:focus-visible {
+  color: var(--primary);
+  outline: none;
+}
+
+.sort-direction {
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: var(--secondary);
+  color: var(--primary);
+  font-size: 0.68rem;
+  text-transform: none;
 }
 
 .data-table tbody tr:hover {
@@ -861,7 +964,8 @@ select:focus {
 }
 
 @media (max-width: 1040px) {
-  .inventory-filter-form {
+  .inventory-filter-form,
+  .saved-view-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -938,6 +1042,7 @@ select:focus {
   .login-form,
   .manager-fields,
   .inventory-filter-form,
+  .saved-view-bar,
   .history-filter-form,
   .dashboard-manager,
   .manager-row,

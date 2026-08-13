@@ -157,6 +157,7 @@ export interface SnapshotVmInventoryRow {
   host?: string;
   guestOs?: string;
   ipAddress?: string;
+  ipAddresses?: string[];
   vcpuCount?: number;
   allocatedRamMiB?: number;
   storageAllocatedGiB?: number;
@@ -183,8 +184,48 @@ export interface SnapshotVmInventoryFilters {
   clusterId?: string;
   powerState?: string;
   environment?: string;
+  sortBy?: SnapshotVmInventorySortKey;
+  sortDirection?: SnapshotVmInventorySortDirection;
   page?: number;
   pageSize?: number;
+}
+
+export type SnapshotVmInventorySortKey =
+  | "managerName"
+  | "clusterName"
+  | "name"
+  | "powerState"
+  | "host"
+  | "guestOs"
+  | "ipAddress"
+  | "vcpuCount"
+  | "allocatedRamMiB"
+  | "storageAllocatedGiB"
+  | "storageUsedGiB"
+  | "collectedAt";
+
+export type SnapshotVmInventorySortDirection = "asc" | "desc";
+
+export interface SavedView {
+  id: string;
+  ownerUsername: string;
+  name: string;
+  scope: string;
+  filters: Record<string, unknown>;
+  columns: string[];
+  sort: Record<string, unknown>;
+  visibility: "private" | "shared";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SavedViewInput {
+  name?: string;
+  scope?: string;
+  filters?: Record<string, unknown>;
+  columns?: string[];
+  sort?: Record<string, unknown>;
+  visibility?: "private" | "shared";
 }
 
 export async function getHealth(): Promise<HealthResponse> {
@@ -330,6 +371,35 @@ export function snapshotVmInventoryExportUrl(format: "csv" | "pdf", filters: Sna
   return `/api/exports/snapshot-vms${queryString({ ...filters, format })}`;
 }
 
+export async function listSavedViews(scope: string): Promise<SavedView[]> {
+  const response = await fetch(`/api/saved-views${queryString({ scope })}`);
+  const body = (await response.json().catch(() => undefined)) as { savedViews?: SavedView[]; error?: string } | undefined;
+  if (!response.ok || !body?.savedViews) {
+    throw new Error(body?.error ?? `Saved views request failed with HTTP ${response.status}`);
+  }
+  return body.savedViews;
+}
+
+export async function createSavedView(input: SavedViewInput): Promise<SavedView> {
+  return savedViewFromResponse(
+    await fetch("/api/saved-views", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input)
+    })
+  );
+}
+
+export async function updateSavedView(id: string, input: SavedViewInput): Promise<SavedView> {
+  return savedViewFromResponse(
+    await fetch(`/api/saved-views/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input)
+    })
+  );
+}
+
 async function snapshotFromResponse(response: Response): Promise<SnapshotDetail> {
   const body = (await response.json().catch(() => undefined)) as { snapshot?: SnapshotDetail; error?: string } | undefined;
   if (!response.ok || !body?.snapshot) {
@@ -344,6 +414,14 @@ async function managerFromResponse(response: Response): Promise<Manager> {
     throw new Error(body?.error ?? `Manager request failed with HTTP ${response.status}`);
   }
   return body.manager;
+}
+
+async function savedViewFromResponse(response: Response): Promise<SavedView> {
+  const body = (await response.json().catch(() => undefined)) as { savedView?: SavedView; error?: string } | undefined;
+  if (!response.ok || !body?.savedView) {
+    throw new Error(body?.error ?? `Saved view request failed with HTTP ${response.status}`);
+  }
+  return body.savedView;
 }
 
 function queryString(values: object): string {

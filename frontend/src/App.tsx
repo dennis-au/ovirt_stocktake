@@ -1,10 +1,12 @@
 import {
   Activity,
   AlertTriangle,
+  ArrowUpDown,
   CheckCircle2,
   Clock,
   Database,
   Download,
+  GripVertical,
   HardDrive,
   History,
   LayoutDashboard,
@@ -14,6 +16,7 @@ import {
   Network,
   Play,
   RefreshCw,
+  Save,
   Server,
   XCircle
 } from "lucide-react";
@@ -21,6 +24,7 @@ import { type ChangeEvent, type FormEvent, useEffect, useState } from "react";
 import {
   collectAllManagers,
   collectManager,
+  createSavedView,
   createManager,
   deleteManager,
   getDashboard,
@@ -28,6 +32,7 @@ import {
   getSnapshot,
   getSnapshotVmInventory,
   getSession,
+  listSavedViews,
   listManagers,
   listSnapshots,
   login,
@@ -35,10 +40,12 @@ import {
   snapshotVmInventoryExportUrl,
   testManagerCollection,
   updateManager,
+  updateSavedView,
   type DashboardClusterDetail,
   type DashboardClusterSummary,
   type DashboardClusterVm,
   type DashboardResponse,
+  type SavedView,
   type Manager,
   type ManagerInput,
   type ManagerTestCollectionResult,
@@ -47,11 +54,54 @@ import {
   type SnapshotVmInventoryFilters,
   type SnapshotVmInventoryResponse,
   type SnapshotVmInventoryRow,
+  type SnapshotVmInventorySortDirection,
+  type SnapshotVmInventorySortKey,
   type SessionResponse
 } from "./api";
 
 type PageId = "dashboard" | "inventory" | "managers" | "history" | "cluster";
 type SnapshotFilters = { managerId: string; status: string };
+type InventoryColumnKey =
+  | "managerName"
+  | "clusterName"
+  | "name"
+  | "powerState"
+  | "host"
+  | "guestOs"
+  | "ipAddress"
+  | "vcpuCount"
+  | "allocatedRamMiB"
+  | "storage"
+  | "collectedAt";
+type InventoryColumn = {
+  key: InventoryColumnKey;
+  label: string;
+  sortable?: SnapshotVmInventorySortKey;
+  className?: string;
+  render: (vm: SnapshotVmInventoryRow) => string;
+};
+
+const inventorySavedViewScope = "inventory.vms";
+const inventoryColumns: InventoryColumn[] = [
+  { key: "managerName", label: "Manager", sortable: "managerName", render: (vm) => vm.managerName },
+  { key: "clusterName", label: "Cluster", sortable: "clusterName", render: (vm) => vm.clusterName ?? "-" },
+  { key: "name", label: "VM Name", sortable: "name", className: "wrap-cell strong-cell", render: (vm) => vm.name },
+  { key: "powerState", label: "Power State", sortable: "powerState", className: "state-cell", render: (vm) => vm.powerState ?? "-" },
+  { key: "host", label: "Host", sortable: "host", className: "wrap-cell", render: (vm) => vm.host ?? "-" },
+  { key: "guestOs", label: "Guest OS", sortable: "guestOs", className: "wrap-cell", render: (vm) => vm.guestOs ?? "-" },
+  { key: "ipAddress", label: "IP Addresses", sortable: "ipAddress", className: "wrap-cell ip-cell", render: formatIpAddresses },
+  { key: "vcpuCount", label: "vCPU Count", sortable: "vcpuCount", className: "numeric-cell", render: (vm) => formatNumber(vm.vcpuCount) },
+  {
+    key: "allocatedRamMiB",
+    label: "Allocated RAM",
+    sortable: "allocatedRamMiB",
+    className: "numeric-cell",
+    render: (vm) => formatMemory(vm.allocatedRamMiB)
+  },
+  { key: "storage", label: "Storage Allocated / Used", sortable: "storageAllocatedGiB", className: "numeric-cell", render: formatVmStorage },
+  { key: "collectedAt", label: "Collected", sortable: "collectedAt", className: "date-cell", render: (vm) => new Date(vm.collectedAt).toLocaleString() }
+];
+const defaultInventoryColumnOrder = inventoryColumns.map((column) => column.key);
 
 const pageTitles: Record<PageId, string> = {
   dashboard: "Dashboard",
@@ -89,6 +139,14 @@ export function App() {
   const [inventoryFilters, setInventoryFilters] = useState<SnapshotVmInventoryFilters>({ page: 1, pageSize: 100 });
   const [inventoryError, setInventoryError] = useState("");
   const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [inventoryColumnOrder, setInventoryColumnOrder] = useState<InventoryColumnKey[]>(defaultInventoryColumnOrder);
+  const [draggedInventoryColumn, setDraggedInventoryColumn] = useState<InventoryColumnKey | undefined>();
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [selectedSavedViewId, setSelectedSavedViewId] = useState("");
+  const [savedViewName, setSavedViewName] = useState("");
+  const [savedViewError, setSavedViewError] = useState("");
+  const [savedViewMessage, setSavedViewMessage] = useState("");
+  const [savingView, setSavingView] = useState(false);
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -107,6 +165,9 @@ export function App() {
       setDashboard(undefined);
       setClusterDetail(undefined);
       setInventory(undefined);
+      setSavedViews([]);
+      setSelectedSavedViewId("");
+      setSavedViewName("");
       return;
     }
 
@@ -126,6 +187,7 @@ export function App() {
         setDashboardError(error instanceof Error ? error.message : "Dashboard failed");
       });
     void loadInventory(inventoryFilters);
+    void loadSavedViews();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.authenticated]);
 
@@ -223,6 +285,9 @@ export function App() {
     setDashboard(undefined);
     setClusterDetail(undefined);
     setInventory(undefined);
+    setSavedViews([]);
+    setSelectedSavedViewId("");
+    setSavedViewName("");
   }
 
   async function loadInventory(filters: SnapshotVmInventoryFilters) {
@@ -237,6 +302,15 @@ export function App() {
     }
   }
 
+  async function loadSavedViews() {
+    setSavedViewError("");
+    try {
+      setSavedViews(await listSavedViews(inventorySavedViewScope));
+    } catch (error) {
+      setSavedViewError(error instanceof Error ? error.message : "Saved views failed");
+    }
+  }
+
   async function handleInventoryFilter(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -245,7 +319,8 @@ export function App() {
       managerId: String(form.get("managerId") ?? ""),
       clusterId: String(form.get("clusterId") ?? ""),
       powerState: String(form.get("powerState") ?? ""),
-      environment: String(form.get("environment") ?? ""),
+      sortBy: inventoryFilters.sortBy,
+      sortDirection: inventoryFilters.sortDirection,
       page: 1,
       pageSize: inventoryFilters.pageSize ?? 100
     };
@@ -254,9 +329,82 @@ export function App() {
   }
 
   async function clearInventoryFilters() {
-    const nextFilters = { page: 1, pageSize: inventoryFilters.pageSize ?? 100 };
+    const nextFilters = { sortBy: inventoryFilters.sortBy, sortDirection: inventoryFilters.sortDirection, page: 1, pageSize: inventoryFilters.pageSize ?? 100 };
     setInventoryFilters(nextFilters);
     await loadInventory(nextFilters);
+  }
+
+  async function handleInventorySort(sortBy: SnapshotVmInventorySortKey) {
+    const sortDirection: SnapshotVmInventorySortDirection =
+      inventoryFilters.sortBy === sortBy && inventoryFilters.sortDirection !== "desc" ? "desc" : "asc";
+    const nextFilters = { ...inventoryFilters, sortBy, sortDirection, page: 1 };
+    setInventoryFilters(nextFilters);
+    await loadInventory(nextFilters);
+  }
+
+  function handleInventoryColumnDrop(targetKey: InventoryColumnKey) {
+    if (!draggedInventoryColumn || draggedInventoryColumn === targetKey) {
+      setDraggedInventoryColumn(undefined);
+      return;
+    }
+    setInventoryColumnOrder((current) => reorderInventoryColumns(current, draggedInventoryColumn, targetKey));
+    setDraggedInventoryColumn(undefined);
+  }
+
+  async function handleSavedViewSelect(event: ChangeEvent<HTMLSelectElement>) {
+    const viewId = event.currentTarget.value;
+    setSelectedSavedViewId(viewId);
+    setSavedViewMessage("");
+    setSavedViewError("");
+    if (!viewId) {
+      setSavedViewName("");
+      return;
+    }
+
+    const view = savedViews.find((item) => item.id === viewId);
+    if (!view) {
+      return;
+    }
+    const nextFilters = savedViewFilters(view);
+    setSavedViewName(view.name);
+    setInventoryColumnOrder(savedViewColumns(view));
+    setInventoryFilters(nextFilters);
+    await loadInventory(nextFilters);
+  }
+
+  async function handleSaveInventoryView(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const name = String(form.get("savedViewName") ?? "").trim();
+    if (!name) {
+      setSavedViewError("View name is required");
+      return;
+    }
+
+    setSavingView(true);
+    setSavedViewError("");
+    setSavedViewMessage("");
+    try {
+      const input = {
+        name,
+        scope: inventorySavedViewScope,
+        filters: compactInventoryFilters(inventoryFilters),
+        columns: inventoryColumnOrder,
+        sort: {
+          sortBy: inventoryFilters.sortBy,
+          sortDirection: inventoryFilters.sortDirection
+        }
+      };
+      const saved = selectedSavedViewId ? await updateSavedView(selectedSavedViewId, input) : await createSavedView(input);
+      setSavedViews((current) => [saved, ...current.filter((view) => view.id !== saved.id)]);
+      setSelectedSavedViewId(saved.id);
+      setSavedViewName(saved.name);
+      setSavedViewMessage("Inventory view saved");
+    } catch (error) {
+      setSavedViewError(error instanceof Error ? error.message : "Save view failed");
+    } finally {
+      setSavingView(false);
+    }
   }
 
   async function handleManagerSubmit(event: FormEvent<HTMLFormElement>) {
@@ -607,6 +755,38 @@ export function App() {
                   </a>
                 </div>
               </div>
+              <form className="saved-view-bar" onSubmit={(event) => void handleSaveInventoryView(event)}>
+                <label>
+                  <span>Saved View</span>
+                  <select value={selectedSavedViewId} onChange={(event) => void handleSavedViewSelect(event)}>
+                    <option value="">Current layout</option>
+                    {savedViews.map((view) => (
+                      <option key={view.id} value={view.id}>
+                        {view.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>View Name</span>
+                  <input
+                    name="savedViewName"
+                    value={savedViewName}
+                    onChange={(event) => setSavedViewName(event.currentTarget.value)}
+                    placeholder="Operations review"
+                  />
+                </label>
+                <button className="button secondary" type="submit" disabled={savingView}>
+                  <Save aria-hidden="true" size={16} />
+                  {selectedSavedViewId ? "Update View" : "Save View"}
+                </button>
+              </form>
+              {savedViewError && (
+                <p className="form-error" role="alert">
+                  {savedViewError}
+                </p>
+              )}
+              {savedViewMessage && <p className="form-success">{savedViewMessage}</p>}
               <div className="inventory-summary-row" aria-label="Inventory result summary">
                 <span className="state-pill">{inventory ? `${inventory.total} VMs` : "Loading VMs"}</span>
                 <span className="state-pill">{activeInventoryFilterCount} active filters</span>
@@ -652,17 +832,6 @@ export function App() {
                     ))}
                   </select>
                 </label>
-                <label>
-                  <span>Environment</span>
-                  <select name="environment" defaultValue={inventoryFilters.environment ?? ""}>
-                    <option value="">All</option>
-                    {inventory?.filterOptions.environments.map((environment) => (
-                      <option key={environment} value={environment}>
-                        {environment}
-                      </option>
-                    ))}
-                  </select>
-                </label>
                 <div className="manager-actions">
                   <button className="button" type="submit" disabled={inventoryLoading}>
                     Filter
@@ -678,7 +847,18 @@ export function App() {
                 </p>
               )}
               {inventoryLoading && <p className="muted">Loading inventory</p>}
-              {inventory && <InventoryTable inventory={inventory} />}
+              {inventory && (
+                <InventoryTable
+                  columnOrder={inventoryColumnOrder}
+                  draggedColumn={draggedInventoryColumn}
+                  inventory={inventory}
+                  onColumnDragStart={setDraggedInventoryColumn}
+                  onColumnDrop={handleInventoryColumnDrop}
+                  onSort={(sortBy) => void handleInventorySort(sortBy)}
+                  sortBy={inventoryFilters.sortBy}
+                  sortDirection={inventoryFilters.sortDirection}
+                />
+              )}
             </section>
           )}
 
@@ -1009,52 +1189,91 @@ function ClusterTable({
   );
 }
 
-function InventoryTable({ inventory }: { inventory: SnapshotVmInventoryResponse }) {
+function InventoryTable({
+  columnOrder,
+  draggedColumn,
+  inventory,
+  onColumnDragStart,
+  onColumnDrop,
+  onSort,
+  sortBy,
+  sortDirection
+}: {
+  columnOrder: InventoryColumnKey[];
+  draggedColumn?: InventoryColumnKey;
+  inventory: SnapshotVmInventoryResponse;
+  onColumnDragStart: (column: InventoryColumnKey | undefined) => void;
+  onColumnDrop: (column: InventoryColumnKey) => void;
+  onSort: (sortBy: SnapshotVmInventorySortKey) => void;
+  sortBy?: SnapshotVmInventorySortKey;
+  sortDirection?: SnapshotVmInventorySortDirection;
+}) {
+  const columns = orderedInventoryColumns(columnOrder);
   return (
-    <section className="table-card" aria-labelledby="inventory-table-title">
+    <section className="table-card inventory-table-card" aria-labelledby="inventory-table-title">
       <div className="table-title">
         <h3 id="inventory-table-title">VM Details</h3>
+        <span className="table-hint">Drag headers to reorder columns</span>
       </div>
-      <div className="table-scroll">
-        <table className="data-table extra-wide-table">
+      <div className="table-scroll inventory-table-scroll">
+        <table className="data-table inventory-data-table">
+          <colgroup>
+            {columns.map((column) => (
+              <col key={column.key} style={{ width: inventoryColumnWidth(column.key) }} />
+            ))}
+          </colgroup>
           <thead>
             <tr>
-              <th scope="col">Manager</th>
-              <th scope="col">Cluster</th>
-              <th scope="col">VM Name</th>
-              <th scope="col">Environment</th>
-              <th scope="col">Power State</th>
-              <th scope="col">Host</th>
-              <th scope="col">Guest OS</th>
-              <th scope="col">IP Address</th>
-              <th scope="col">vCPU Count</th>
-              <th scope="col">Allocated RAM</th>
-              <th scope="col">Storage Allocated / Used</th>
-              <th scope="col">Collected</th>
+              {columns.map((column) => (
+                <th
+                  key={column.key}
+                  scope="col"
+                  className={draggedColumn === column.key ? "dragging-column" : undefined}
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    onColumnDragStart(column.key);
+                  }}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDragEnd={() => onColumnDragStart(undefined)}
+                  onDrop={() => onColumnDrop(column.key)}
+                >
+                  <div className="column-header">
+                    <GripVertical aria-hidden="true" size={14} />
+                    {column.sortable ? (
+                      <button
+                        className="sort-button"
+                        type="button"
+                        onClick={() => onSort(column.sortable!)}
+                        aria-label={`Sort by ${column.label}`}
+                      >
+                        <span>{column.label}</span>
+                        <ArrowUpDown aria-hidden="true" size={14} />
+                        {sortBy === column.sortable && <span className="sort-direction">{sortDirection === "desc" ? "Desc" : "Asc"}</span>}
+                      </button>
+                    ) : (
+                      <span>{column.label}</span>
+                    )}
+                  </div>
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {inventory.rows.length === 0 ? (
               <tr>
-                <td className="empty-table-cell" colSpan={12}>
+                <td className="empty-table-cell" colSpan={columns.length}>
                   No VMs match the current filters
                 </td>
               </tr>
             ) : (
               inventory.rows.map((vm) => (
                 <tr key={`${vm.managerId}:${vm.vmId}`}>
-                  <td>{vm.managerName}</td>
-                  <td>{vm.clusterName ?? "-"}</td>
-                  <td>{vm.name}</td>
-                  <td>{vm.environment ?? "-"}</td>
-                  <td>{vm.powerState ?? "-"}</td>
-                  <td>{vm.host ?? "-"}</td>
-                  <td>{vm.guestOs ?? "-"}</td>
-                  <td>{vm.ipAddress ?? "-"}</td>
-                  <td>{vm.vcpuCount ?? "-"}</td>
-                  <td>{formatMemory(vm.allocatedRamMiB)}</td>
-                  <td>{formatVmStorage(vm)}</td>
-                  <td>{new Date(vm.collectedAt).toLocaleString()}</td>
+                  {columns.map((column) => (
+                    <td key={column.key} className={column.className}>
+                      {column.render(vm)}
+                    </td>
+                  ))}
                 </tr>
               ))
             )}
@@ -1165,7 +1384,7 @@ function statusClass(status: SnapshotSummary["status"]) {
 }
 
 function countActiveInventoryFilters(filters: SnapshotVmInventoryFilters) {
-  return [filters.search, filters.managerId, filters.clusterId, filters.powerState, filters.environment].filter(Boolean).length;
+  return [filters.search, filters.managerId, filters.clusterId, filters.powerState].filter(Boolean).length;
 }
 
 function latestInventoryCollectedAt(rows: SnapshotVmInventoryRow[] | undefined) {
@@ -1195,8 +1414,105 @@ function formatResourceName(resource: string) {
   return resource.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase());
 }
 
+function orderedInventoryColumns(order: InventoryColumnKey[]) {
+  const columnsByKey = new Map(inventoryColumns.map((column) => [column.key, column]));
+  const ordered = order.map((key) => columnsByKey.get(key)).filter((column): column is InventoryColumn => Boolean(column));
+  const missing = inventoryColumns.filter((column) => !order.includes(column.key));
+  return [...ordered, ...missing];
+}
+
+function reorderInventoryColumns(order: InventoryColumnKey[], source: InventoryColumnKey, target: InventoryColumnKey) {
+  const nextOrder = orderedInventoryColumns(order).map((column) => column.key);
+  const sourceIndex = nextOrder.indexOf(source);
+  const targetIndex = nextOrder.indexOf(target);
+  if (sourceIndex < 0 || targetIndex < 0) {
+    return nextOrder;
+  }
+  const [moved] = nextOrder.splice(sourceIndex, 1);
+  nextOrder.splice(targetIndex, 0, moved);
+  return nextOrder;
+}
+
+function inventoryColumnWidth(key: InventoryColumnKey) {
+  const widths: Record<InventoryColumnKey, string> = {
+    managerName: "8%",
+    clusterName: "8%",
+    name: "12%",
+    powerState: "7%",
+    host: "9%",
+    guestOs: "10%",
+    ipAddress: "12%",
+    vcpuCount: "6%",
+    allocatedRamMiB: "10%",
+    storage: "10%",
+    collectedAt: "8%"
+  };
+  return widths[key];
+}
+
+function savedViewFilters(view: SavedView): SnapshotVmInventoryFilters {
+  const filters = view.filters;
+  const sort = view.sort;
+  return {
+    search: stringRecordValue(filters.search),
+    managerId: stringRecordValue(filters.managerId),
+    clusterId: stringRecordValue(filters.clusterId),
+    powerState: stringRecordValue(filters.powerState),
+    sortBy: inventorySortKey(sort.sortBy) ?? inventorySortKey(filters.sortBy),
+    sortDirection: inventorySortDirection(sort.sortDirection) ?? inventorySortDirection(filters.sortDirection),
+    page: 1,
+    pageSize: positiveRecordNumber(filters.pageSize) ?? 100
+  };
+}
+
+function savedViewColumns(view: SavedView): InventoryColumnKey[] {
+  const validColumns = new Set(defaultInventoryColumnOrder);
+  const columns = view.columns.filter((column): column is InventoryColumnKey => validColumns.has(column as InventoryColumnKey));
+  return columns.length ? columns : defaultInventoryColumnOrder;
+}
+
+function compactInventoryFilters(filters: SnapshotVmInventoryFilters): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const key of ["search", "managerId", "clusterId", "powerState", "pageSize"] as const) {
+    const value = filters[key];
+    if (value !== undefined && value !== "") {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function inventorySortKey(value: unknown): SnapshotVmInventorySortKey | undefined {
+  return inventoryColumns.some((column) => column.sortable === value) ? (value as SnapshotVmInventorySortKey) : undefined;
+}
+
+function inventorySortDirection(value: unknown): SnapshotVmInventorySortDirection | undefined {
+  return value === "asc" || value === "desc" ? value : undefined;
+}
+
+function stringRecordValue(value: unknown) {
+  return typeof value === "string" ? value : undefined;
+}
+
+function positiveRecordNumber(value: unknown) {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function formatNumber(value: number | undefined) {
+  return value === undefined ? "-" : value.toLocaleString();
+}
+
+function formatIpAddresses(vm: SnapshotVmInventoryRow) {
+  const addresses = vm.ipAddresses?.length ? vm.ipAddresses : vm.ipAddress ? [vm.ipAddress] : [];
+  return addresses.length ? addresses.join(", ") : "-";
+}
+
 function formatMemory(value: number | undefined) {
-  return value === undefined ? "-" : `${value.toLocaleString()} MiB`;
+  if (value === undefined) {
+    return "-";
+  }
+  const gib = value / 1024;
+  return `${value.toLocaleString()} MiB (~${formatRoundedGib(gib)} GiB)`;
 }
 
 function formatStorage(vm: DashboardClusterVm) {
@@ -1217,6 +1533,10 @@ function inventoryFilterKey(filters: SnapshotVmInventoryFilters) {
 
 function formatGib(value: number | undefined) {
   return value === undefined ? "-" : `${value.toLocaleString()} GiB`;
+}
+
+function formatRoundedGib(value: number) {
+  return Number.isInteger(value) ? value.toLocaleString() : value.toLocaleString(undefined, { maximumFractionDigits: 1 });
 }
 
 function clusterHash(managerId: string, clusterId: string) {

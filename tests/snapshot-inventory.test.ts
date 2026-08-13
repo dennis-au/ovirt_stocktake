@@ -77,19 +77,41 @@ function snapshot(managerId: string, managerName: string): SnapshotPayload {
           host: { id: "host-1", name: "node-01" },
           cpu: { topology: { sockets: 1, cores: 2, threads: 2 } },
           memory: 8589934592,
-          guest_info: { os: { name: "Linux", version: "9" } },
+          guest_info: {
+            os: { name: "Linux", version: "9" },
+            ips: { ip: [{ version: "v4", address: "10.0.0.12" }, { version: "v4", address: "10.0.0.10" }] }
+          },
           custom_properties: { custom_property: [{ name: "environment", value: "prod" }] },
           nics: {
             nic: [
               {
                 reported_devices: {
-                  reported_device: [{ ips: { ip: [{ version: "v4", address: "10.0.0.10" }] } }]
+                  reported_device: [{ ips: { ip: [{ version: "v4", address: "10.0.0.10" }, { version: "v4", address: "10.0.0.11" }] } }]
                 }
               }
             ]
           },
           disk_attachments: {
             disk_attachment: [{ disk: { id: "disk-1", provisioned_size: 10737418240, actual_size: 5368709120 } }]
+          }
+        },
+        {
+          id: "vm-2",
+          name: "web-10",
+          status: "down",
+          cluster: { id: "cluster-1", name: "Default" },
+          host: { id: "host-1", name: "node-01" },
+          cpu: { topology: { sockets: 1, cores: 1, threads: 1 } },
+          memory: 4299161600,
+          guest_info: { os: { name: "Linux", version: "8" } },
+          nics: {
+            nic: [
+              {
+                reported_devices: {
+                  reported_device: [{ ips: { ip: [{ version: "v4", address: "10.0.0.20" }] } }]
+                }
+              }
+            ]
           }
         }
       ]
@@ -120,6 +142,7 @@ describe("snapshot-backed VM inventory", () => {
       host: "node-01",
       guestOs: "Linux 9",
       ipAddress: "10.0.0.10",
+      ipAddresses: ["10.0.0.10", "10.0.0.11", "10.0.0.12"],
       vcpuCount: 4,
       allocatedRamMiB: 8192,
       storageAllocatedGiB: 10,
@@ -131,6 +154,10 @@ describe("snapshot-backed VM inventory", () => {
     expect(csv.statusCode).toBe(200);
     expect(csv.headers["content-type"]).toContain("text/csv");
     expect(csv.body).toContain("api-01");
+    expect(csv.body).toContain("IP Addresses");
+    expect(csv.body).toContain("10.0.0.10; 10.0.0.11; 10.0.0.12");
+    expect(csv.body).toContain("8,192 MiB (~8 GiB)");
+    expect(csv.body).not.toContain("Environment");
     expect(csv.body).not.toContain("manager-password");
 
     const pdf = await app.inject({ method: "GET", url: "/api/exports/snapshot-vms?format=pdf&search=api", cookies: cookie });
@@ -138,6 +165,30 @@ describe("snapshot-backed VM inventory", () => {
     expect(pdf.headers["content-type"]).toContain("application/pdf");
     expect(pdf.rawPayload.subarray(0, 5).toString("utf8")).toBe("%PDF-");
     expect(pdf.rawPayload.toString("utf8")).not.toContain("manager-password");
+    await app.close();
+  });
+
+  it("sorts latest snapshot VM inventory before pagination", async () => {
+    const { app, cookie } = await authenticatedApp();
+    const managerId = await createManager(app, cookie, "lab");
+    await app.inject({ method: "POST", url: "/api/snapshots", cookies: cookie, payload: snapshot(managerId, "lab") });
+
+    const nameSort = await app.inject({
+      method: "GET",
+      url: "/api/inventory/snapshot-vms?sortBy=name&sortDirection=desc&page=1&pageSize=1",
+      cookies: cookie
+    });
+    expect(nameSort.statusCode).toBe(200);
+    expect(nameSort.json().inventory.rows.map((row: { name: string }) => row.name)).toEqual(["web-10"]);
+    expect(nameSort.json().inventory.total).toBe(2);
+
+    const ramSort = await app.inject({
+      method: "GET",
+      url: "/api/inventory/snapshot-vms?sortBy=allocatedRamMiB&sortDirection=asc&page=1&pageSize=2",
+      cookies: cookie
+    });
+    expect(ramSort.statusCode).toBe(200);
+    expect(ramSort.json().inventory.rows.map((row: { name: string }) => row.name)).toEqual(["web-10", "api-01"]);
     await app.close();
   });
 });
