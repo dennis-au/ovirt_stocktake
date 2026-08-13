@@ -114,6 +114,10 @@ function snapshot(managerId: string, managerName: string): SnapshotPayload {
             ]
           }
         }
+      ],
+      vmSnapshots: [
+        { id: "snap-1", name: "before-patch", vm: { id: "vm-1", name: "api-01" } },
+        { id: "snap-2", description: "pre-upgrade", vm: { id: "vm-1", name: "api-01" } }
       ]
     },
     warnings: [],
@@ -146,14 +150,21 @@ describe("snapshot-backed VM inventory", () => {
       vcpuCount: 4,
       allocatedRamMiB: 8192,
       storageAllocatedGiB: 10,
-      storageUsedGiB: 5
+      storageUsedGiB: 5,
+      snapshotNames: ["before-patch", "pre-upgrade"]
     });
     expect(list.json().inventory.filterOptions.clusters).toEqual([{ value: "cluster-1", label: "Default" }]);
+
+    const allVms = await app.inject({ method: "GET", url: "/api/inventory/snapshot-vms", cookies: cookie });
+    expect(allVms.statusCode).toBe(200);
+    expect(allVms.json().inventory.rows.find((row: { name: string }) => row.name === "web-10").snapshotNames).toEqual([]);
 
     const csv = await app.inject({ method: "GET", url: "/api/exports/snapshot-vms?format=csv&search=api", cookies: cookie });
     expect(csv.statusCode).toBe(200);
     expect(csv.headers["content-type"]).toContain("text/csv");
     expect(csv.body).toContain("api-01");
+    expect(csv.body).toContain("Snapshots");
+    expect(csv.body).toContain("before-patch; pre-upgrade");
     expect(csv.body).toContain("IP Addresses");
     expect(csv.body).toContain("10.0.0.10; 10.0.0.11; 10.0.0.12");
     expect(csv.body).toContain("8,192 MiB (~8 GiB)");
@@ -189,6 +200,43 @@ describe("snapshot-backed VM inventory", () => {
     });
     expect(ramSort.statusCode).toBe(200);
     expect(ramSort.json().inventory.rows.map((row: { name: string }) => row.name)).toEqual(["web-10", "api-01"]);
+    await app.close();
+  });
+
+  it("lists and exports latest manager cluster host VM relationships", async () => {
+    const { app, cookie } = await authenticatedApp();
+    const managerId = await createManager(app, cookie, "lab");
+    await app.inject({ method: "POST", url: "/api/snapshots", cookies: cookie, payload: snapshot(managerId, "lab") });
+
+    const list = await app.inject({
+      method: "GET",
+      url: "/api/inventory/relationships",
+      cookies: cookie
+    });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().relationships.rows).toEqual([
+      expect.objectContaining({
+        managerName: "lab",
+        clusterName: "Default",
+        hostName: "node-01",
+        vmName: "api-01"
+      }),
+      expect.objectContaining({
+        managerName: "lab",
+        clusterName: "Default",
+        hostName: "node-01",
+        vmName: "web-10"
+      })
+    ]);
+    expect(list.json().relationships.total).toBe(2);
+
+    const csv = await app.inject({ method: "GET", url: "/api/exports/relationships", cookies: cookie });
+    expect(csv.statusCode).toBe(200);
+    expect(csv.headers["content-type"]).toContain("text/csv");
+    expect(csv.body).toContain("Manager,Cluster,Host,VM");
+    expect(csv.body).toContain("lab,Default,node-01,api-01");
+    expect(csv.body).toContain("lab,Default,node-01,web-10");
+    expect(csv.body).not.toContain("manager-password");
     await app.close();
   });
 });

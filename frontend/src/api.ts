@@ -162,6 +162,7 @@ export interface SnapshotVmInventoryRow {
   allocatedRamMiB?: number;
   storageAllocatedGiB?: number;
   storageUsedGiB?: number;
+  snapshotNames: string[];
 }
 
 export interface SnapshotVmInventoryResponse {
@@ -205,6 +206,25 @@ export type SnapshotVmInventorySortKey =
   | "collectedAt";
 
 export type SnapshotVmInventorySortDirection = "asc" | "desc";
+
+export interface RelationshipRow {
+  managerId: string;
+  managerName: string;
+  managerUrl: string;
+  snapshotId: string;
+  collectedAt: string;
+  clusterId?: string;
+  clusterName?: string;
+  hostId?: string;
+  hostName?: string;
+  vmId?: string;
+  vmName?: string;
+}
+
+export interface RelationshipResponse {
+  rows: RelationshipRow[];
+  total: number;
+}
 
 export interface SavedView {
   id: string;
@@ -369,6 +389,19 @@ export async function getSnapshotVmInventory(filters: SnapshotVmInventoryFilters
 
 export function snapshotVmInventoryExportUrl(format: "csv" | "pdf", filters: SnapshotVmInventoryFilters = {}): string {
   return `/api/exports/snapshot-vms${queryString({ ...filters, format })}`;
+}
+
+export async function getRelationships(): Promise<RelationshipResponse> {
+  const response = await fetch("/api/inventory/relationships");
+  const body = (await response.json().catch(() => undefined)) as { relationships?: RelationshipResponse; error?: string } | undefined;
+  if (!response.ok || !body?.relationships) {
+    throw new Error(body?.error ?? `Relationships request failed with HTTP ${response.status}`);
+  }
+  return body.relationships;
+}
+
+export function relationshipsExportUrl(): string {
+  return "/api/exports/relationships";
 }
 
 export async function listSavedViews(scope: string): Promise<SavedView[]> {

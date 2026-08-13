@@ -9,6 +9,7 @@ import {
   GripVertical,
   HardDrive,
   History,
+  Layers3,
   LayoutDashboard,
   ArrowLeft,
   LogIn,
@@ -29,6 +30,7 @@ import {
   deleteManager,
   getDashboard,
   getDashboardCluster,
+  getRelationships,
   getSnapshot,
   getSnapshotVmInventory,
   getSession,
@@ -37,6 +39,7 @@ import {
   listSnapshots,
   login,
   logout,
+  relationshipsExportUrl,
   snapshotVmInventoryExportUrl,
   testManagerCollection,
   updateManager,
@@ -49,6 +52,8 @@ import {
   type Manager,
   type ManagerInput,
   type ManagerTestCollectionResult,
+  type RelationshipResponse,
+  type RelationshipRow,
   type SnapshotDetail,
   type SnapshotSummary,
   type SnapshotVmInventoryFilters,
@@ -59,7 +64,7 @@ import {
   type SessionResponse
 } from "./api";
 
-type PageId = "dashboard" | "inventory" | "managers" | "history" | "cluster";
+type PageId = "dashboard" | "inventory" | "relationships" | "managers" | "history" | "cluster";
 type SnapshotFilters = { managerId: string; status: string };
 type InventoryColumnKey =
   | "managerName"
@@ -72,6 +77,7 @@ type InventoryColumnKey =
   | "vcpuCount"
   | "allocatedRamMiB"
   | "storage"
+  | "snapshots"
   | "collectedAt";
 type InventoryColumn = {
   key: InventoryColumnKey;
@@ -99,6 +105,7 @@ const inventoryColumns: InventoryColumn[] = [
     render: (vm) => formatMemory(vm.allocatedRamMiB)
   },
   { key: "storage", label: "Storage Allocated / Used", sortable: "storageAllocatedGiB", className: "numeric-cell", render: formatVmStorage },
+  { key: "snapshots", label: "Snapshots", className: "wrap-cell", render: formatSnapshotNames },
   { key: "collectedAt", label: "Collected", sortable: "collectedAt", className: "date-cell", render: (vm) => new Date(vm.collectedAt).toLocaleString() }
 ];
 const defaultInventoryColumnOrder = inventoryColumns.map((column) => column.key);
@@ -106,6 +113,7 @@ const defaultInventoryColumnOrder = inventoryColumns.map((column) => column.key)
 const pageTitles: Record<PageId, string> = {
   dashboard: "Dashboard",
   inventory: "Inventory",
+  relationships: "Relationships",
   managers: "Managers",
   history: "Snapshot History",
   cluster: "Cluster Detail"
@@ -141,6 +149,9 @@ export function App() {
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [inventoryColumnOrder, setInventoryColumnOrder] = useState<InventoryColumnKey[]>(defaultInventoryColumnOrder);
   const [draggedInventoryColumn, setDraggedInventoryColumn] = useState<InventoryColumnKey | undefined>();
+  const [relationships, setRelationships] = useState<RelationshipResponse | undefined>();
+  const [relationshipsError, setRelationshipsError] = useState("");
+  const [relationshipsLoading, setRelationshipsLoading] = useState(false);
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [selectedSavedViewId, setSelectedSavedViewId] = useState("");
   const [savedViewName, setSavedViewName] = useState("");
@@ -165,6 +176,7 @@ export function App() {
       setDashboard(undefined);
       setClusterDetail(undefined);
       setInventory(undefined);
+      setRelationships(undefined);
       setSavedViews([]);
       setSelectedSavedViewId("");
       setSavedViewName("");
@@ -196,6 +208,12 @@ export function App() {
       void loadInventory(inventoryFilters);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, session.authenticated]);
+
+  useEffect(() => {
+    if (session.authenticated && activePage === "relationships") {
+      void loadRelationships();
+    }
   }, [activePage, session.authenticated]);
 
   useEffect(() => {
@@ -285,6 +303,7 @@ export function App() {
     setDashboard(undefined);
     setClusterDetail(undefined);
     setInventory(undefined);
+    setRelationships(undefined);
     setSavedViews([]);
     setSelectedSavedViewId("");
     setSavedViewName("");
@@ -299,6 +318,18 @@ export function App() {
       setInventoryError(error instanceof Error ? error.message : "Inventory failed");
     } finally {
       setInventoryLoading(false);
+    }
+  }
+
+  async function loadRelationships() {
+    setRelationshipsLoading(true);
+    setRelationshipsError("");
+    try {
+      setRelationships(await getRelationships());
+    } catch (error) {
+      setRelationshipsError(error instanceof Error ? error.message : "Relationships failed");
+    } finally {
+      setRelationshipsLoading(false);
     }
   }
 
@@ -570,6 +601,10 @@ export function App() {
           <a href="#inventory" aria-current={activePage === "inventory" ? "page" : undefined}>
             <Activity aria-hidden="true" size={17} />
             Inventory
+          </a>
+          <a href="#relationships" aria-current={activePage === "relationships" ? "page" : undefined}>
+            <Layers3 aria-hidden="true" size={17} />
+            Relationships
           </a>
           <a href="#managers" aria-current={activePage === "managers" ? "page" : undefined}>
             <Server aria-hidden="true" size={17} />
@@ -859,6 +894,37 @@ export function App() {
                   sortDirection={inventoryFilters.sortDirection}
                 />
               )}
+            </section>
+          )}
+
+          {session.authenticated && activePage === "relationships" && (
+            <section className="relationships-panel" aria-labelledby="relationships-title">
+              <div className="section-heading with-actions">
+                <div>
+                  <Layers3 aria-hidden="true" size={20} />
+                  <div>
+                    <h2 id="relationships-title">Relationships</h2>
+                    <p>{relationships ? `${relationships.total} manager, cluster, host, VM relationships` : "Latest hierarchy from saved snapshots"}</p>
+                  </div>
+                </div>
+                <div className="topbar-actions">
+                  <button className="button secondary" type="button" disabled={relationshipsLoading} onClick={() => void loadRelationships()}>
+                    <RefreshCw aria-hidden="true" size={16} />
+                    Refresh
+                  </button>
+                  <a className="button secondary" href={relationshipsExportUrl()}>
+                    <Download aria-hidden="true" size={16} />
+                    Export CSV
+                  </a>
+                </div>
+              </div>
+              {relationshipsError && (
+                <p className="form-error" role="alert">
+                  {relationshipsError}
+                </p>
+              )}
+              {relationshipsLoading && <p className="muted">Loading relationships</p>}
+              {relationships && <RelationshipTable relationships={relationships} />}
             </section>
           )}
 
@@ -1279,6 +1345,54 @@ function InventoryTable({
   );
 }
 
+function RelationshipTable({ relationships }: { relationships: RelationshipResponse }) {
+  return (
+    <section className="table-card" aria-labelledby="relationship-table-title">
+      <div className="table-title">
+        <h3 id="relationship-table-title">Manager Hierarchy</h3>
+      </div>
+      <div className="table-scroll">
+        <table className="data-table relationship-data-table">
+          <thead>
+            <tr>
+              <th scope="col">Manager</th>
+              <th scope="col">Cluster</th>
+              <th scope="col">Host</th>
+              <th scope="col">VM</th>
+              <th scope="col">Collected</th>
+            </tr>
+          </thead>
+          <tbody>
+            {relationships.rows.length === 0 ? (
+              <tr>
+                <td className="empty-table-cell" colSpan={5}>
+                  No relationship data collected yet
+                </td>
+              </tr>
+            ) : (
+              relationships.rows.map((row) => <RelationshipTableRow key={relationshipRowKey(row)} row={row} />)
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function RelationshipTableRow({ row }: { row: RelationshipRow }) {
+  return (
+    <tr>
+      <td>
+        <strong>{row.managerName}</strong>
+      </td>
+      <td>{row.clusterName ?? "-"}</td>
+      <td>{row.hostName ?? "-"}</td>
+      <td>{row.vmName ?? "-"}</td>
+      <td>{new Date(row.collectedAt).toLocaleString()}</td>
+    </tr>
+  );
+}
+
 function ClusterVmTable({ vms }: { vms: DashboardClusterVm[] }) {
   return (
     <section className="table-card" aria-labelledby="cluster-vm-table-title">
@@ -1485,6 +1599,10 @@ function formatIpAddresses(vm: SnapshotVmInventoryRow) {
   return addresses.length ? addresses.join(", ") : "-";
 }
 
+function formatSnapshotNames(vm: SnapshotVmInventoryRow) {
+  return vm.snapshotNames.length ? vm.snapshotNames.join(", ") : "-";
+}
+
 function formatMemory(value: number | undefined) {
   if (value === undefined) {
     return "-";
@@ -1521,6 +1639,10 @@ function clusterHash(managerId: string, clusterId: string) {
   return `#cluster/${encodeURIComponent(managerId)}/${encodeURIComponent(clusterId)}`;
 }
 
+function relationshipRowKey(row: RelationshipRow) {
+  return [row.managerId, row.clusterId ?? "-", row.hostId ?? "-", row.vmId ?? "-", row.snapshotId].join(":");
+}
+
 function clusterParamsFromHash(hash: string): { managerId: string; clusterId: string } | undefined {
   const [page, managerId, clusterId] = hash.replace(/^#/, "").split("/");
   if (page !== "cluster" || !managerId || !clusterId) {
@@ -1536,6 +1658,9 @@ function pageFromHash(): PageId {
   }
   if (hash === "inventory") {
     return "inventory";
+  }
+  if (hash === "relationships") {
+    return "relationships";
   }
   if (hash === "managers" || hash === "manager-title") {
     return "managers";

@@ -60,6 +60,21 @@ export interface SnapshotVmInventoryRow {
   allocatedRamMiB?: number;
   storageAllocatedGiB?: number;
   storageUsedGiB?: number;
+  snapshotNames: string[];
+}
+
+export interface RelationshipRow {
+  managerId: string;
+  managerName: string;
+  managerUrl: string;
+  snapshotId: string;
+  collectedAt: string;
+  clusterId?: string;
+  clusterName?: string;
+  hostId?: string;
+  hostName?: string;
+  vmId?: string;
+  vmName?: string;
 }
 
 type SnapshotVmInventorySortKey =
@@ -74,6 +89,7 @@ type SnapshotVmInventorySortKey =
   | "allocatedRamMiB"
   | "storageAllocatedGiB"
   | "storageUsedGiB"
+  | "snapshotNames"
   | "collectedAt";
 
 type SnapshotVmInventorySortDirection = "asc" | "desc";
@@ -92,6 +108,11 @@ export interface SnapshotVmInventoryResult {
   };
 }
 
+export interface RelationshipResult {
+  rows: RelationshipRow[];
+  total: number;
+}
+
 const inventoryColumns: Array<{ key: keyof SnapshotVmInventoryRow; title: string; format?: (row: SnapshotVmInventoryRow) => unknown }> = [
   { key: "managerName", title: "Manager" },
   { key: "clusterName", title: "Cluster" },
@@ -104,6 +125,7 @@ const inventoryColumns: Array<{ key: keyof SnapshotVmInventoryRow; title: string
   { key: "allocatedRamMiB", title: "Allocated RAM", format: (row) => formatMemory(row.allocatedRamMiB) },
   { key: "storageAllocatedGiB", title: "Storage Allocated GiB" },
   { key: "storageUsedGiB", title: "Storage Used GiB" },
+  { key: "snapshotNames", title: "Snapshots", format: (row) => formatSnapshotNames(row.snapshotNames) },
   { key: "collectedAt", title: "Collected At" }
 ];
 
@@ -125,6 +147,10 @@ const sortableColumns = new Set<SnapshotVmInventorySortKey>([
 export function registerSnapshotInventoryRoutes(app: FastifyInstance, db: SqliteDatabase): void {
   app.get("/api/inventory/snapshot-vms", { preHandler: requireRole(roles.read) }, async (request) => ({
     inventory: querySnapshotVmInventory(db, parseSnapshotVmInventoryQuery(request.query))
+  }));
+
+  app.get("/api/inventory/relationships", { preHandler: requireRole(roles.read) }, async () => ({
+    relationships: queryRelationships(db)
   }));
 
   app.get("/api/exports/snapshot-vms", { preHandler: requireRole(roles.read) }, async (request, reply) => {
@@ -149,6 +175,21 @@ export function registerSnapshotInventoryRoutes(app: FastifyInstance, db: Sqlite
       .header("Content-Disposition", "attachment; filename=\"ovirt-inventory-vms.pdf\"")
       .send(snapshotVmInventoryPdf(inventory.rows, inventory.filters));
   });
+
+  app.get("/api/exports/relationships", { preHandler: requireRole(roles.read) }, async (request, reply) => {
+    const relationships = queryRelationships(db);
+    const session = currentSession(db, request);
+    recordAudit(db, {
+      actor: session?.username,
+      action: "export.relationships",
+      metadata: { rows: relationships.rows.length }
+    });
+
+    return reply
+      .header("Content-Type", "text/csv; charset=utf-8")
+      .header("Content-Disposition", "attachment; filename=\"ovirt-inventory-relationships.csv\"")
+      .send(relationshipsCsv(relationships.rows));
+  });
 }
 
 export function querySnapshotVmInventory(db: SqliteDatabase, query: SnapshotVmInventoryQuery): SnapshotVmInventoryResult {
@@ -171,6 +212,14 @@ export function querySnapshotVmInventory(db: SqliteDatabase, query: SnapshotVmIn
   };
 }
 
+export function queryRelationships(db: SqliteDatabase): RelationshipResult {
+  const rows = allLatestRelationshipRows(db);
+  return {
+    rows,
+    total: rows.length
+  };
+}
+
 function allLatestSnapshotVmRows(db: SqliteDatabase): SnapshotVmInventoryRow[] {
   const managers = db.prepare("SELECT id, name, url FROM managers ORDER BY name COLLATE NOCASE").all() as ManagerRow[];
   return managers.flatMap((manager) => {
@@ -179,6 +228,17 @@ function allLatestSnapshotVmRows(db: SqliteDatabase): SnapshotVmInventoryRow[] {
       return [];
     }
     return snapshotRows(manager, snapshot);
+  });
+}
+
+function allLatestRelationshipRows(db: SqliteDatabase): RelationshipRow[] {
+  const managers = db.prepare("SELECT id, name, url FROM managers ORDER BY name COLLATE NOCASE").all() as ManagerRow[];
+  return managers.flatMap((manager) => {
+    const snapshot = latestInventorySnapshot(db, manager.id);
+    if (!snapshot) {
+      return [];
+    }
+    return relationshipRows(manager, snapshot);
   });
 }
 
@@ -198,14 +258,15 @@ function snapshotRows(manager: ManagerRow, snapshot: SnapshotRow): SnapshotVmInv
   const dataCenters = new Map(resources.dataCenters.map((item) => [stringValue(item.id), item]));
   const clusters = new Map(resources.clusters.map((item) => [stringValue(item.id), item]));
   const hosts = new Map(resources.hosts.map((item) => [stringValue(item.id), item]));
+  const snapshotsByVmId = vmSnapshotsByVmId(resources);
 
   return resources.vms.map((vm) => {
     const vmId = stringValue(vm.id) ?? stringValue(vm.name) ?? "unknown";
-    const clusterId = refId(vm.cluster);
-    const cluster = clusterId ? clusters.get(clusterId) : undefined;
-    const dataCenterId = refId(cluster?.data_center);
     const hostId = refId(vm.host);
     const host = hostId ? hosts.get(hostId) : undefined;
+    const clusterId = refId(vm.cluster) ?? refId(host?.cluster);
+    const cluster = clusterId ? clusters.get(clusterId) : undefined;
+    const dataCenterId = refId(cluster?.data_center);
     const diskTotals = vmDiskTotals(vm);
     const ipAddresses = vmIpAddresses(vm);
 
@@ -230,9 +291,80 @@ function snapshotRows(manager: ManagerRow, snapshot: SnapshotRow): SnapshotVmInv
       vcpuCount: vcpuCount(vm),
       allocatedRamMiB: allocatedRamMiB(vm),
       storageAllocatedGiB: diskTotals.allocated,
-      storageUsedGiB: diskTotals.used
+      storageUsedGiB: diskTotals.used,
+      snapshotNames: snapshotsByVmId.get(vmId) ?? []
     };
   });
+}
+
+function relationshipRows(manager: ManagerRow, snapshot: SnapshotRow): RelationshipRow[] {
+  const resources = JSON.parse(snapshot.resources_json) as InventoryResources;
+  const clusters = new Map(resources.clusters.map((item) => [stringValue(item.id), item]));
+  const hosts = new Map(resources.hosts.map((item) => [stringValue(item.id), item]));
+  const hostIdsWithVms = new Set<string>();
+  const rows: RelationshipRow[] = [];
+
+  for (const vm of resources.vms) {
+    const vmId = stringValue(vm.id) ?? stringValue(vm.name) ?? "unknown";
+    const hostId = refId(vm.host);
+    const host = hostId ? hosts.get(hostId) : undefined;
+    const clusterId = refId(vm.cluster) ?? refId(host?.cluster);
+    const cluster = clusterId ? clusters.get(clusterId) : undefined;
+    if (hostId) {
+      hostIdsWithVms.add(hostId);
+    }
+
+    rows.push({
+      managerId: manager.id,
+      managerName: manager.name,
+      managerUrl: manager.url,
+      snapshotId: snapshot.id,
+      collectedAt: snapshot.collected_at,
+      clusterId,
+      clusterName: refName(vm.cluster) ?? stringValue(cluster?.name) ?? clusterId,
+      hostId,
+      hostName: refName(vm.host) ?? stringValue(host?.name) ?? hostId,
+      vmId,
+      vmName: stringValue(vm.name) ?? vmId
+    });
+  }
+
+  for (const host of resources.hosts) {
+    const hostId = stringValue(host.id);
+    if (!hostId || hostIdsWithVms.has(hostId)) {
+      continue;
+    }
+    const clusterId = refId(host.cluster);
+    const cluster = clusterId ? clusters.get(clusterId) : undefined;
+    rows.push({
+      managerId: manager.id,
+      managerName: manager.name,
+      managerUrl: manager.url,
+      snapshotId: snapshot.id,
+      collectedAt: snapshot.collected_at,
+      clusterId,
+      clusterName: refName(host.cluster) ?? stringValue(cluster?.name) ?? clusterId,
+      hostId,
+      hostName: stringValue(host.name) ?? hostId
+    });
+  }
+
+  if (rows.length === 0) {
+    rows.push({
+      managerId: manager.id,
+      managerName: manager.name,
+      managerUrl: manager.url,
+      snapshotId: snapshot.id,
+      collectedAt: snapshot.collected_at
+    });
+  }
+
+  return rows.sort((left, right) =>
+    compareSortValues(left.managerName, right.managerName) ||
+    compareSortValues(left.clusterName, right.clusterName) ||
+    compareSortValues(left.hostName, right.hostName) ||
+    compareSortValues(left.vmName, right.vmName)
+  );
 }
 
 function parseSnapshotVmInventoryQuery(query: unknown): SnapshotVmInventoryQuery {
@@ -281,7 +413,8 @@ function matchesFilters(row: SnapshotVmInventoryRow, filters: SnapshotVmInventor
       row.host,
       row.guestOs,
       row.ipAddress,
-      ...(row.ipAddresses ?? [])
+      ...(row.ipAddresses ?? []),
+      ...row.snapshotNames
     ]
       .filter(isString)
       .join(" ")
@@ -304,6 +437,21 @@ function snapshotVmInventoryCsv(rows: SnapshotVmInventoryRow[]): string {
   return [
     inventoryColumns.map((column) => csvCell(column.title)).join(","),
     ...rows.map((row) => inventoryColumns.map((column) => csvCell(column.format ? column.format(row) : row[column.key])).join(","))
+  ].join("\n");
+}
+
+const relationshipColumns: Array<{ key: keyof RelationshipRow; title: string }> = [
+  { key: "managerName", title: "Manager" },
+  { key: "clusterName", title: "Cluster" },
+  { key: "hostName", title: "Host" },
+  { key: "vmName", title: "VM" },
+  { key: "collectedAt", title: "Collected At" }
+];
+
+function relationshipsCsv(rows: RelationshipRow[]): string {
+  return [
+    relationshipColumns.map((column) => csvCell(column.title)).join(","),
+    ...rows.map((row) => relationshipColumns.map((column) => csvCell(row[column.key] ?? "-")).join(","))
   ].join("\n");
 }
 
@@ -409,6 +557,20 @@ function vmIpAddresses(vm: InventoryResource): string[] {
   );
   const guestInfoIps = childItems(recordValue(vm.guest_info)?.ips, "ip").map((ip) => stringValue(ip.address));
   return uniqueOrderedStrings([...nicIps, ...guestInfoIps].filter(isString));
+}
+
+function vmSnapshotsByVmId(resources: InventoryResources): Map<string, string[]> {
+  const byVmId = new Map<string, string[]>();
+  for (const snapshot of resources.vmSnapshots) {
+    const vmId = refId(snapshot.vm) ?? stringValue(snapshot.vm_id) ?? stringValue(snapshot.vmId);
+    const name = stringValue(snapshot.name) ?? stringValue(snapshot.description) ?? stringValue(snapshot.id);
+    if (!vmId || !name) {
+      continue;
+    }
+    const current = byVmId.get(vmId) ?? [];
+    byVmId.set(vmId, uniqueOrderedStrings([...current, name]));
+  }
+  return byVmId;
 }
 
 function vcpuCount(vm: InventoryResource): number | undefined {
@@ -561,6 +723,10 @@ function formatMemory(value: number | undefined): string | undefined {
   }
   const gib = value / 1024;
   return `${value.toLocaleString()} MiB (~${formatRoundedGib(gib)} GiB)`;
+}
+
+function formatSnapshotNames(value: string[]): string {
+  return value.length ? value.join("; ") : "-";
 }
 
 function formatRoundedGib(value: number): string {

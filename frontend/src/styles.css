@@ -216,6 +216,7 @@ button:disabled {
 .inventory-panel,
 .manager-panel,
 .snapshot-panel-page,
+.relationships-panel,
 .cluster-detail-panel {
   display: grid;
   gap: 14px;
@@ -605,6 +606,10 @@ select:focus {
 .inventory-data-table {
   min-width: 100%;
   table-layout: fixed;
+}
+
+.relationship-data-table {
+  min-width: 860px;
 }
 
 .data-table th,
