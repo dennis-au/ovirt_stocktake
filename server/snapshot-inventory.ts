@@ -75,6 +75,7 @@ export interface RelationshipRow {
   hostName?: string;
   vmId?: string;
   vmName?: string;
+  storageDomainNames: string[];
 }
 
 type SnapshotVmInventorySortKey =
@@ -178,17 +179,18 @@ export function registerSnapshotInventoryRoutes(app: FastifyInstance, db: Sqlite
 
   app.get("/api/exports/relationships", { preHandler: requireRole(roles.read) }, async (request, reply) => {
     const relationships = queryRelationships(db);
+    const columns = parseRelationshipColumns(request.query);
     const session = currentSession(db, request);
     recordAudit(db, {
       actor: session?.username,
       action: "export.relationships",
-      metadata: { rows: relationships.rows.length }
+      metadata: { rows: relationships.rows.length, columns: columns.map((column) => column.key) }
     });
 
     return reply
       .header("Content-Type", "text/csv; charset=utf-8")
       .header("Content-Disposition", "attachment; filename=\"ovirt-inventory-relationships.csv\"")
-      .send(relationshipsCsv(relationships.rows));
+      .send(relationshipsCsv(relationships.rows, columns));
   });
 }
 
@@ -301,6 +303,8 @@ function relationshipRows(manager: ManagerRow, snapshot: SnapshotRow): Relations
   const resources = JSON.parse(snapshot.resources_json) as InventoryResources;
   const clusters = new Map(resources.clusters.map((item) => [stringValue(item.id), item]));
   const hosts = new Map(resources.hosts.map((item) => [stringValue(item.id), item]));
+  const disks = resourceMapById(resources.disks, ["id", "diskId"]);
+  const storageDomains = resourceMapById(resources.storageDomains, ["id", "storageDomainId"]);
   const hostIdsWithVms = new Set<string>();
   const rows: RelationshipRow[] = [];
 
@@ -325,7 +329,8 @@ function relationshipRows(manager: ManagerRow, snapshot: SnapshotRow): Relations
       hostId,
       hostName: refName(vm.host) ?? stringValue(host?.name) ?? hostId,
       vmId,
-      vmName: stringValue(vm.name) ?? vmId
+      vmName: stringValue(vm.name) ?? vmId,
+      storageDomainNames: vmStorageDomainNames(vm, disks, storageDomains)
     });
   }
 
@@ -345,7 +350,8 @@ function relationshipRows(manager: ManagerRow, snapshot: SnapshotRow): Relations
       clusterId,
       clusterName: refName(host.cluster) ?? stringValue(cluster?.name) ?? clusterId,
       hostId,
-      hostName: stringValue(host.name) ?? hostId
+      hostName: stringValue(host.name) ?? hostId,
+      storageDomainNames: []
     });
   }
 
@@ -355,7 +361,8 @@ function relationshipRows(manager: ManagerRow, snapshot: SnapshotRow): Relations
       managerName: manager.name,
       managerUrl: manager.url,
       snapshotId: snapshot.id,
-      collectedAt: snapshot.collected_at
+      collectedAt: snapshot.collected_at,
+      storageDomainNames: []
     });
   }
 
@@ -440,18 +447,47 @@ function snapshotVmInventoryCsv(rows: SnapshotVmInventoryRow[]): string {
   ].join("\n");
 }
 
-const relationshipColumns: Array<{ key: keyof RelationshipRow; title: string }> = [
+const relationshipColumns = [
   { key: "managerName", title: "Manager" },
   { key: "clusterName", title: "Cluster" },
   { key: "hostName", title: "Host" },
   { key: "vmName", title: "VM" },
-  { key: "collectedAt", title: "Collected At" }
-];
+  { key: "storageDomainNames", title: "Storage Domains", format: (row) => formatNameList(row.storageDomainNames) },
+  { key: "collectedAt", title: "Collected At" },
+  { key: "managerId", title: "Manager ID" },
+  { key: "clusterId", title: "Cluster ID" },
+  { key: "hostId", title: "Host ID" },
+  { key: "vmId", title: "VM ID" },
+  { key: "snapshotId", title: "Snapshot ID" },
+  { key: "managerUrl", title: "Manager URL" }
+] satisfies Array<{ key: keyof RelationshipRow; title: string; format?: (row: RelationshipRow) => unknown }>;
 
-function relationshipsCsv(rows: RelationshipRow[]): string {
+type RelationshipColumn = (typeof relationshipColumns)[number];
+
+const defaultRelationshipColumns = relationshipColumns.slice(0, 6);
+
+function parseRelationshipColumns(query: unknown): RelationshipColumn[] {
+  const raw = query && typeof query === "object" ? stringValue((query as Record<string, unknown>).columns) : undefined;
+  if (!raw) {
+    return defaultRelationshipColumns;
+  }
+  const columnsByKey = new Map<string, RelationshipColumn>(relationshipColumns.map((column) => [column.key, column]));
+  const seen = new Set<string>();
+  const requested: RelationshipColumn[] = [];
+  for (const key of raw.split(",")) {
+    const column = columnsByKey.get(key.trim());
+    if (column && !seen.has(column.key)) {
+      requested.push(column);
+      seen.add(column.key);
+    }
+  }
+  return requested.length ? requested : defaultRelationshipColumns;
+}
+
+function relationshipsCsv(rows: RelationshipRow[], columns: RelationshipColumn[] = defaultRelationshipColumns): string {
   return [
-    relationshipColumns.map((column) => csvCell(column.title)).join(","),
-    ...rows.map((row) => relationshipColumns.map((column) => csvCell(row[column.key] ?? "-")).join(","))
+    columns.map((column) => csvCell(column.title)).join(","),
+    ...rows.map((row) => columns.map((column) => csvCell(column.format ? column.format(row) : (row[column.key] ?? "-"))).join(","))
   ].join("\n");
 }
 
@@ -571,6 +607,46 @@ function vmSnapshotsByVmId(resources: InventoryResources): Map<string, string[]>
     byVmId.set(vmId, uniqueOrderedStrings([...current, name]));
   }
   return byVmId;
+}
+
+function vmStorageDomainNames(
+  vm: InventoryResource,
+  disksById: Map<string, InventoryResource>,
+  storageDomainsById: Map<string, InventoryResource>
+): string[] {
+  const names: string[] = [];
+  for (const attachment of childItems(vm.disk_attachments ?? vm.diskAttachments, "disk_attachment")) {
+    const embeddedDisk = recordValue(attachment.disk) ?? attachment;
+    const diskId = stringValue(embeddedDisk.id ?? embeddedDisk.diskId ?? attachment.disk_id ?? attachment.diskId);
+    const relatedDisk = diskId ? disksById.get(diskId) : undefined;
+    names.push(...diskStorageDomainNames(embeddedDisk, storageDomainsById));
+    if (relatedDisk) {
+      names.push(...diskStorageDomainNames(relatedDisk, storageDomainsById));
+    }
+  }
+  return uniqueOrderedStrings(names);
+}
+
+function diskStorageDomainNames(disk: InventoryResource, storageDomainsById: Map<string, InventoryResource>): string[] {
+  const refs = [
+    ...childItems(disk.storage_domains, "storage_domain"),
+    ...childItems(disk.storageDomains, "storageDomain")
+  ];
+  const names = refs.map((domain) => storageDomainName(domain, storageDomainsById)).filter(isString);
+  const directRef = recordValue(disk.storage_domain ?? disk.storageDomain);
+  const directId = stringValue(disk.storage_domain_id ?? disk.storageDomainId) ?? refId(directRef);
+  const directName = stringValue(disk.storage_domain ?? disk.storageDomain) ?? refName(directRef);
+  if (directName) {
+    names.push(directName);
+  } else if (directId) {
+    names.push(stringValue(storageDomainsById.get(directId)?.name) ?? directId);
+  }
+  return uniqueOrderedStrings(names);
+}
+
+function storageDomainName(domain: InventoryResource, storageDomainsById: Map<string, InventoryResource>): string | undefined {
+  const id = stringValue(domain.id ?? domain.storageDomainId);
+  return refName(domain) ?? stringValue(domain.name) ?? (id ? stringValue(storageDomainsById.get(id)?.name) ?? id : undefined);
 }
 
 function vcpuCount(vm: InventoryResource): number | undefined {
@@ -726,7 +802,24 @@ function formatMemory(value: number | undefined): string | undefined {
 }
 
 function formatSnapshotNames(value: string[]): string {
+  return formatNameList(value);
+}
+
+function formatNameList(value: string[]): string {
   return value.length ? value.join("; ") : "-";
+}
+
+function resourceMapById(items: InventoryResource[], keys: string[]): Map<string, InventoryResource> {
+  const map = new Map<string, InventoryResource>();
+  for (const item of items) {
+    for (const key of keys) {
+      const id = stringValue(item[key]);
+      if (id) {
+        map.set(id, item);
+      }
+    }
+  }
+  return map;
 }
 
 function formatRoundedGib(value: number): string {

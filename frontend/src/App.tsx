@@ -39,7 +39,6 @@ import {
   listSnapshots,
   login,
   logout,
-  relationshipsExportUrl,
   snapshotVmInventoryExportUrl,
   testManagerCollection,
   updateManager,
@@ -53,7 +52,6 @@ import {
   type ManagerInput,
   type ManagerTestCollectionResult,
   type RelationshipResponse,
-  type RelationshipRow,
   type SnapshotDetail,
   type SnapshotSummary,
   type SnapshotVmInventoryFilters,
@@ -63,6 +61,7 @@ import {
   type SnapshotVmInventorySortKey,
   type SessionResponse
 } from "./api";
+import { RelationshipReportBuilder } from "./RelationshipReportBuilder";
 
 type PageId = "dashboard" | "inventory" | "relationships" | "managers" | "history" | "cluster";
 type SnapshotFilters = { managerId: string; status: string };
@@ -898,34 +897,12 @@ export function App() {
           )}
 
           {session.authenticated && activePage === "relationships" && (
-            <section className="relationships-panel" aria-labelledby="relationships-title">
-              <div className="section-heading with-actions">
-                <div>
-                  <Layers3 aria-hidden="true" size={20} />
-                  <div>
-                    <h2 id="relationships-title">Relationships</h2>
-                    <p>{relationships ? `${relationships.total} manager, cluster, host, VM relationships` : "Latest hierarchy from saved snapshots"}</p>
-                  </div>
-                </div>
-                <div className="topbar-actions">
-                  <button className="button secondary" type="button" disabled={relationshipsLoading} onClick={() => void loadRelationships()}>
-                    <RefreshCw aria-hidden="true" size={16} />
-                    Refresh
-                  </button>
-                  <a className="button secondary" href={relationshipsExportUrl()}>
-                    <Download aria-hidden="true" size={16} />
-                    Export CSV
-                  </a>
-                </div>
-              </div>
-              {relationshipsError && (
-                <p className="form-error" role="alert">
-                  {relationshipsError}
-                </p>
-              )}
-              {relationshipsLoading && <p className="muted">Loading relationships</p>}
-              {relationships && <RelationshipTable relationships={relationships} />}
-            </section>
+            <RelationshipReportBuilder
+              error={relationshipsError}
+              loading={relationshipsLoading}
+              relationships={relationships}
+              onRefresh={() => void loadRelationships()}
+            />
           )}
 
           {session.authenticated && activePage === "managers" && (
@@ -1345,54 +1322,6 @@ function InventoryTable({
   );
 }
 
-function RelationshipTable({ relationships }: { relationships: RelationshipResponse }) {
-  return (
-    <section className="table-card" aria-labelledby="relationship-table-title">
-      <div className="table-title">
-        <h3 id="relationship-table-title">Manager Hierarchy</h3>
-      </div>
-      <div className="table-scroll">
-        <table className="data-table relationship-data-table">
-          <thead>
-            <tr>
-              <th scope="col">Manager</th>
-              <th scope="col">Cluster</th>
-              <th scope="col">Host</th>
-              <th scope="col">VM</th>
-              <th scope="col">Collected</th>
-            </tr>
-          </thead>
-          <tbody>
-            {relationships.rows.length === 0 ? (
-              <tr>
-                <td className="empty-table-cell" colSpan={5}>
-                  No relationship data collected yet
-                </td>
-              </tr>
-            ) : (
-              relationships.rows.map((row) => <RelationshipTableRow key={relationshipRowKey(row)} row={row} />)
-            )}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-function RelationshipTableRow({ row }: { row: RelationshipRow }) {
-  return (
-    <tr>
-      <td>
-        <strong>{row.managerName}</strong>
-      </td>
-      <td>{row.clusterName ?? "-"}</td>
-      <td>{row.hostName ?? "-"}</td>
-      <td>{row.vmName ?? "-"}</td>
-      <td>{new Date(row.collectedAt).toLocaleString()}</td>
-    </tr>
-  );
-}
-
 function ClusterVmTable({ vms }: { vms: DashboardClusterVm[] }) {
   return (
     <section className="table-card" aria-labelledby="cluster-vm-table-title">
@@ -1637,10 +1566,6 @@ function formatRoundedGib(value: number) {
 
 function clusterHash(managerId: string, clusterId: string) {
   return `#cluster/${encodeURIComponent(managerId)}/${encodeURIComponent(clusterId)}`;
-}
-
-function relationshipRowKey(row: RelationshipRow) {
-  return [row.managerId, row.clusterId ?? "-", row.hostId ?? "-", row.vmId ?? "-", row.snapshotId].join(":");
 }
 
 function clusterParamsFromHash(hash: string): { managerId: string; clusterId: string } | undefined {

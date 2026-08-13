@@ -68,6 +68,7 @@ function snapshot(managerId: string, managerName: string): SnapshotPayload {
       dataCenters: [{ id: "dc-1", name: "Default" }],
       clusters: [{ id: "cluster-1", name: "Default", data_center: { id: "dc-1" } }],
       hosts: [{ id: "host-1", name: "node-01", cluster: { id: "cluster-1" } }],
+      storageDomains: [{ id: "sd-1", name: "data", data_center: { id: "dc-1" } }],
       vms: [
         {
           id: "vm-1",
@@ -92,7 +93,16 @@ function snapshot(managerId: string, managerName: string): SnapshotPayload {
             ]
           },
           disk_attachments: {
-            disk_attachment: [{ disk: { id: "disk-1", provisioned_size: 10737418240, actual_size: 5368709120 } }]
+            disk_attachment: [
+              {
+                disk: {
+                  id: "disk-1",
+                  provisioned_size: 10737418240,
+                  actual_size: 5368709120,
+                  storage_domains: { storage_domain: [{ id: "sd-1" }] }
+                }
+              }
+            ]
           }
         },
         {
@@ -219,13 +229,15 @@ describe("snapshot-backed VM inventory", () => {
         managerName: "lab",
         clusterName: "Default",
         hostName: "node-01",
-        vmName: "api-01"
+        vmName: "api-01",
+        storageDomainNames: ["data"]
       }),
       expect.objectContaining({
         managerName: "lab",
         clusterName: "Default",
         hostName: "node-01",
-        vmName: "web-10"
+        vmName: "web-10",
+        storageDomainNames: []
       })
     ]);
     expect(list.json().relationships.total).toBe(2);
@@ -233,10 +245,29 @@ describe("snapshot-backed VM inventory", () => {
     const csv = await app.inject({ method: "GET", url: "/api/exports/relationships", cookies: cookie });
     expect(csv.statusCode).toBe(200);
     expect(csv.headers["content-type"]).toContain("text/csv");
-    expect(csv.body).toContain("Manager,Cluster,Host,VM");
-    expect(csv.body).toContain("lab,Default,node-01,api-01");
-    expect(csv.body).toContain("lab,Default,node-01,web-10");
+    expect(csv.body).toContain("Manager,Cluster,Host,VM,Storage Domains,Collected At");
+    expect(csv.body).toContain("lab,Default,node-01,api-01,data");
+    expect(csv.body).toContain("lab,Default,node-01,web-10,-");
     expect(csv.body).not.toContain("manager-password");
+
+    const customCsv = await app.inject({
+      method: "GET",
+      url: "/api/exports/relationships?columns=vmName,storageDomainNames,hostName,managerName",
+      cookies: cookie
+    });
+    expect(customCsv.statusCode).toBe(200);
+    expect(customCsv.body.split("\n")[0]).toBe("VM,Storage Domains,Host,Manager");
+    expect(customCsv.body).toContain("api-01,data,node-01,lab");
+    expect(customCsv.body).toContain("web-10,-,node-01,lab");
+
+    const fallbackCsv = await app.inject({
+      method: "GET",
+      url: "/api/exports/relationships?columns=password,token",
+      cookies: cookie
+    });
+    expect(fallbackCsv.statusCode).toBe(200);
+    expect(fallbackCsv.body.split("\n")[0]).toBe("Manager,Cluster,Host,VM,Storage Domains,Collected At");
+    expect(fallbackCsv.body).not.toContain("manager-password");
     await app.close();
   });
 });

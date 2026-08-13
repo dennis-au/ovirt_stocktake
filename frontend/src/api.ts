@@ -219,12 +219,15 @@ export interface RelationshipRow {
   hostName?: string;
   vmId?: string;
   vmName?: string;
+  storageDomainNames: string[];
 }
 
 export interface RelationshipResponse {
   rows: RelationshipRow[];
   total: number;
 }
+
+export type RelationshipColumnKey = keyof RelationshipRow;
 
 export interface SavedView {
   id: string;
@@ -400,8 +403,8 @@ export async function getRelationships(): Promise<RelationshipResponse> {
   return body.relationships;
 }
 
-export function relationshipsExportUrl(): string {
-  return "/api/exports/relationships";
+export function relationshipsExportUrl(columns?: RelationshipColumnKey[]): string {
+  return `/api/exports/relationships${queryString({ columns: columns?.join(",") })}`;
 }
 
 export async function listSavedViews(scope: string): Promise<SavedView[]> {
