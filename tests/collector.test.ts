@@ -392,6 +392,9 @@ describe("manual backend collection API", () => {
 
     const snapshots = await app.inject({ method: "GET", url: `/api/snapshots?managerId=${managerId}`, cookies: cookie });
     expect(snapshots.json().snapshots).toHaveLength(1);
+    const inventory = await app.inject({ method: "GET", url: "/api/inventory/snapshot-vms", cookies: cookie });
+    expect(inventory.statusCode).toBe(200);
+    expect(inventory.json().inventory.total).toBe(1001);
     await app.close();
   });
 

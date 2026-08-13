@@ -13,6 +13,7 @@ import {
   LogOut,
   Network,
   Play,
+  RefreshCw,
   Server,
   XCircle
 } from "lucide-react";
@@ -127,6 +128,13 @@ export function App() {
     void loadInventory(inventoryFilters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.authenticated]);
+
+  useEffect(() => {
+    if (session.authenticated && activePage === "inventory") {
+      void loadInventory(inventoryFilters);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, session.authenticated]);
 
   useEffect(() => {
     if (!session.authenticated || activePage !== "cluster") {
@@ -330,6 +338,7 @@ export function App() {
       setSelectedSnapshot(saved);
       setSnapshots((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
       setDashboard(await getDashboard());
+      await loadInventory(inventoryFilters);
       setManagerMessage(`Collection ${saved.status}; snapshot saved`);
     } catch (error) {
       setManagerError(error instanceof Error ? error.message : "Collection failed");
@@ -351,6 +360,7 @@ export function App() {
       setSelectedSnapshot(savedSnapshots[0]);
       setCollectedSnapshot(savedSnapshots[0]);
       setDashboard(await getDashboard());
+      await loadInventory(inventoryFilters);
       setManagerMessage(savedSnapshots.length > 0 ? `Collected ${savedSnapshots.length} enabled manager(s)` : "No enabled managers collected");
     } catch (error) {
       setManagerError(error instanceof Error ? error.message : "Collection failed");
@@ -583,6 +593,10 @@ export function App() {
                   </div>
                 </div>
                 <div className="topbar-actions">
+                  <button className="button secondary" type="button" disabled={inventoryLoading} onClick={() => void loadInventory(inventoryFilters)}>
+                    <RefreshCw aria-hidden="true" size={16} />
+                    Refresh
+                  </button>
                   <a className="button secondary" href={snapshotVmInventoryExportUrl("csv", inventoryFilters)}>
                     <Download aria-hidden="true" size={16} />
                     Export CSV
