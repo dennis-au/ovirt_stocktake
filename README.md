@@ -18,7 +18,7 @@ Supported platforms:
 Release image:
 
 ```bash
-docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.1
+docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.2
 ```
 
 ## Quick Start
@@ -54,6 +54,7 @@ docker run --rm \
 Open the app at `http://localhost:3000`.
 
 The container loads `/data/.env` by default and stores SQLite data under `/data/ovirt-inventory.sqlite`.
+The entrypoint fixes ownership of the mounted `/data` directory before starting the app as the non-root `node` user, so root-created host directories can still be used for SQLite storage.
 
 For production, prefer `OVIRT_INVENTORY_ADMIN_PASSWORD_HASH` instead of `OVIRT_INVENTORY_ADMIN_PASSWORD`. The plaintext password fallback is hashed in memory at startup and is provided for simple container-only setup.
 
