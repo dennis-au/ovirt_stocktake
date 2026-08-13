@@ -16,6 +16,8 @@
 - Use guest-agent availability as a first-class health signal because hostname, IP, OS, and graceful operations depend on it.
 - Export data to Excel, CSV, and JSON without secrets.
 - Build and validate container images with Docker Desktop Buildx for `linux/amd64` and `linux/arm64`.
+- Use `https://github.com/dennis-au/ovirt_stocktake` as the canonical GitHub repository.
+- Publish container images under `ghcr.io/dennis-au/ovirt_stocktake`.
 - Prefer trusted oVirt Manager CA certificates through runtime trust configuration such as `NODE_EXTRA_CA_CERTS`. Any insecure TLS flag must remain default-off, lab-only, and clearly documented.
 - The lab validation target is `https://lab111/ovirt-engine/`. Credentials are supplied out of band and must not be committed, logged, exported, or echoed into docs.
 
@@ -51,3 +53,4 @@
 10. Preserve explainability: health scores, governance exceptions, backup gaps, snapshot risk, and capacity alerts must link to the data that caused them.
 11. Use server-side filtering and pagination for large inventories. Avoid client-only filtering for operational datasets.
 12. Keep exports and logs redacted. No credential, token, or password-grant request body may appear in snapshots, exports, browser storage, logs, tests, or docs.
+13. For release, tag, image, and push work, use `origin` pointing at `https://github.com/dennis-au/ovirt_stocktake.git`; do not push to legacy `dennis-au/ovirt_inventory` or `dennis-au/ovirt-inventory` remotes unless explicitly requested.
