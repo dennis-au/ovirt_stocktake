@@ -117,6 +117,29 @@ describe("configuration", () => {
     expect(config.auth.adminPasswordHash).not.toContain("inventory admin");
     await expect(verifyPassword("inventory admin", config.auth.adminPasswordHash!)).resolves.toBe(true);
   });
+
+  it("allows secure cookies to be disabled for HTTP deployments", () => {
+    expect(
+      loadConfig({
+        NODE_ENV: "production",
+        OVIRT_INVENTORY_DB_PATH: ":memory:",
+        OVIRT_INVENTORY_SECURE_COOKIES: "false"
+      }).auth.secureCookies
+    ).toBe(false);
+    expect(
+      loadConfig({
+        NODE_ENV: "production",
+        OVIRT_INVENTORY_DB_PATH: ":memory:",
+        OVIRT_INVENTORY_SECURE_COOKIES: "true"
+      }).auth.secureCookies
+    ).toBe(true);
+    expect(() =>
+      loadConfig({
+        OVIRT_INVENTORY_DB_PATH: ":memory:",
+        OVIRT_INVENTORY_SECURE_COOKIES: "maybe"
+      })
+    ).toThrow("OVIRT_INVENTORY_SECURE_COOKIES must be true or false");
+  });
 });
 
 describe("application scaffold", () => {

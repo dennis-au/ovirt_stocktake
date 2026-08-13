@@ -71,6 +71,12 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     throw new Error("OVIRT_INVENTORY_DATABASE_SSL must be true or false");
   }
 
+  const secureCookiesValue = environment.OVIRT_INVENTORY_SECURE_COOKIES;
+  const secureCookies = secureCookiesValue === undefined ? undefined : parseBoolean(secureCookiesValue);
+  if (secureCookiesValue !== undefined && secureCookies === undefined) {
+    throw new Error("OVIRT_INVENTORY_SECURE_COOKIES must be true or false");
+  }
+
   const collectorEnabled = parseBoolean(environment.OVIRT_INVENTORY_COLLECTOR_ENABLED ?? "false");
   if (collectorEnabled === undefined) {
     throw new Error("OVIRT_INVENTORY_COLLECTOR_ENABLED must be true or false");
@@ -124,7 +130,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
       adminPasswordHash: adminPasswordHashFromEnvironment(environment),
       sessionSecret: environment.OVIRT_INVENTORY_SESSION_SECRET,
       sessionTtlHours,
-      secureCookies: (environment.NODE_ENV ?? "development") === "production"
+      secureCookies: secureCookies ?? (environment.NODE_ENV ?? "development") === "production"
     }
   };
 }
