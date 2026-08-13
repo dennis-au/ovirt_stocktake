@@ -404,6 +404,9 @@ select:focus {
   grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .relationship-source-panel,
@@ -426,6 +429,9 @@ select:focus {
 .relationship-table-builder {
   display: grid;
   gap: 14px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   padding: 14px;
 }
 
@@ -767,7 +773,7 @@ select:focus {
 
 .relationship-data-table {
   min-width: 100%;
-  table-layout: auto;
+  table-layout: fixed;
 }
 
 .data-table th,
@@ -803,6 +809,19 @@ select:focus {
 
 .relationship-data-table td {
   overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.relationship-table-card,
+.relationship-table-scroll {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.relationship-data-table th,
+.relationship-data-table td {
+  min-width: 0;
 }
 
 .inventory-data-table .numeric-cell,

@@ -18,7 +18,7 @@ Supported platforms:
 Release image:
 
 ```bash
-docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.7
+docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.9
 ```
 
 ## Quick Start

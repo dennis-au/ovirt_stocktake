@@ -606,7 +606,16 @@ function vmSnapshotsByVmId(resources: InventoryResources): Map<string, string[]>
     const current = byVmId.get(vmId) ?? [];
     byVmId.set(vmId, uniqueOrderedStrings([...current, name]));
   }
-  return byVmId;
+  return hideOnlyActiveVmSnapshots(byVmId);
+}
+
+function hideOnlyActiveVmSnapshots(snapshotsByVmId: Map<string, string[]>): Map<string, string[]> {
+  for (const [vmId, names] of snapshotsByVmId) {
+    if (names.length === 1 && names[0].trim().toLowerCase() === "active vm") {
+      snapshotsByVmId.set(vmId, []);
+    }
+  }
+  return snapshotsByVmId;
 }
 
 function vmStorageDomainNames(

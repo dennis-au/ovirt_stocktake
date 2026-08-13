@@ -633,7 +633,7 @@ export function App() {
           </div>
         </header>
 
-        <main className={`content-shell ${activePage === "inventory" ? "inventory-content-shell" : ""}`} aria-labelledby="page-title">
+        <main className={`content-shell ${activePage === "inventory" || activePage === "relationships" ? "inventory-content-shell" : ""}`} aria-labelledby="page-title">
           {authStatus === "checking" && <p className="muted">Checking session</p>}
 
           {authStatus === "ready" && !session.authenticated && (

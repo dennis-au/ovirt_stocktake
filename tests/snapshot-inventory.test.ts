@@ -127,7 +127,8 @@ function snapshot(managerId: string, managerName: string): SnapshotPayload {
       ],
       vmSnapshots: [
         { id: "snap-1", name: "before-patch", vm: { id: "vm-1", name: "api-01" } },
-        { id: "snap-2", description: "pre-upgrade", vm: { id: "vm-1", name: "api-01" } }
+        { id: "snap-2", description: "pre-upgrade", vm: { id: "vm-1", name: "api-01" } },
+        { id: "snap-active", description: "Active VM", vm: { id: "vm-2", name: "web-10" } }
       ]
     },
     warnings: [],
@@ -168,6 +169,12 @@ describe("snapshot-backed VM inventory", () => {
     const allVms = await app.inject({ method: "GET", url: "/api/inventory/snapshot-vms", cookies: cookie });
     expect(allVms.statusCode).toBe(200);
     expect(allVms.json().inventory.rows.find((row: { name: string }) => row.name === "web-10").snapshotNames).toEqual([]);
+
+    const allCsv = await app.inject({ method: "GET", url: "/api/exports/snapshot-vms?format=csv", cookies: cookie });
+    expect(allCsv.statusCode).toBe(200);
+    const webRow = allCsv.body.split("\n").find((line) => line.includes("web-10"));
+    expect(webRow).toBeDefined();
+    expect(webRow).not.toContain("Active VM");
 
     const csv = await app.inject({ method: "GET", url: "/api/exports/snapshot-vms?format=csv&search=api", cookies: cookie });
     expect(csv.statusCode).toBe(200);

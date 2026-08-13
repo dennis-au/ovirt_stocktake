@@ -212,14 +212,14 @@ export function RelationshipReportBuilder({ error, loading, relationships, onRef
           )}
 
           {selectedCluster && (
-            <section className="table-card" aria-labelledby="relationship-vm-table-title">
+            <section className="table-card relationship-table-card" aria-labelledby="relationship-vm-table-title">
               <div className="table-title">
                 <h3 id="relationship-vm-table-title">Related VMs</h3>
                 <span className="table-hint">
                   {selectedManager?.name} / {selectedCluster.name}
                 </span>
               </div>
-              <div className="table-scroll">
+              <div className="table-scroll relationship-table-scroll">
                 <table className="data-table relationship-data-table">
                   <thead>
                     <tr>
