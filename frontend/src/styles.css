@@ -198,6 +198,10 @@ button:disabled {
   padding: 24px;
 }
 
+.inventory-content-shell {
+  width: 100%;
+}
+
 .eyebrow {
   margin: 0 0 4px;
   color: var(--muted-foreground);
@@ -599,7 +603,7 @@ select:focus {
 }
 
 .inventory-data-table {
-  min-width: 920px;
+  min-width: 100%;
   table-layout: fixed;
 }
 
@@ -622,6 +626,7 @@ select:focus {
 
 .inventory-data-table th {
   padding: 0;
+  white-space: normal;
 }
 
 .inventory-data-table td {
@@ -632,11 +637,7 @@ select:focus {
 .inventory-data-table .numeric-cell,
 .inventory-data-table .date-cell,
 .inventory-data-table .state-cell {
-  white-space: nowrap;
-}
-
-.inventory-data-table .ip-cell {
-  min-width: 160px;
+  white-space: normal;
 }
 
 .inventory-data-table .strong-cell {
@@ -646,9 +647,10 @@ select:focus {
 .column-header {
   display: flex;
   align-items: center;
+  min-width: 0;
   gap: 6px;
   min-height: 40px;
-  padding: 0 10px;
+  padding: 0 8px;
   color: #4b5563;
 }
 
@@ -665,8 +667,10 @@ select:focus {
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
+  flex-wrap: wrap;
   gap: 6px;
   min-height: 30px;
+  min-width: 0;
   width: 100%;
   border: 0;
   padding: 0;
@@ -676,6 +680,12 @@ select:focus {
   font-weight: 800;
   text-align: left;
   text-transform: uppercase;
+}
+
+.sort-button span:first-child,
+.column-header > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .sort-button:hover,
@@ -1037,6 +1047,10 @@ select:focus {
 
   .content-shell {
     padding: 16px;
+  }
+
+  .inventory-data-table {
+    min-width: 900px;
   }
 
   .login-form,

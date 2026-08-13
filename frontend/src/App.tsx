@@ -599,7 +599,7 @@ export function App() {
           </div>
         </header>
 
-        <main className="content-shell" aria-labelledby="page-title">
+        <main className={`content-shell ${activePage === "inventory" ? "inventory-content-shell" : ""}`} aria-labelledby="page-title">
           {authStatus === "checking" && <p className="muted">Checking session</p>}
 
           {authStatus === "ready" && !session.authenticated && (
@@ -1217,11 +1217,6 @@ function InventoryTable({
       </div>
       <div className="table-scroll inventory-table-scroll">
         <table className="data-table inventory-data-table">
-          <colgroup>
-            {columns.map((column) => (
-              <col key={column.key} style={{ width: inventoryColumnWidth(column.key) }} />
-            ))}
-          </colgroup>
           <thead>
             <tr>
               {columns.map((column) => (
@@ -1431,23 +1426,6 @@ function reorderInventoryColumns(order: InventoryColumnKey[], source: InventoryC
   const [moved] = nextOrder.splice(sourceIndex, 1);
   nextOrder.splice(targetIndex, 0, moved);
   return nextOrder;
-}
-
-function inventoryColumnWidth(key: InventoryColumnKey) {
-  const widths: Record<InventoryColumnKey, string> = {
-    managerName: "8%",
-    clusterName: "8%",
-    name: "12%",
-    powerState: "7%",
-    host: "9%",
-    guestOs: "10%",
-    ipAddress: "12%",
-    vcpuCount: "6%",
-    allocatedRamMiB: "10%",
-    storage: "10%",
-    collectedAt: "8%"
-  };
-  return widths[key];
 }
 
 function savedViewFilters(view: SavedView): SnapshotVmInventoryFilters {
