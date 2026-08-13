@@ -606,14 +606,12 @@ function vmSnapshotsByVmId(resources: InventoryResources): Map<string, string[]>
     const current = byVmId.get(vmId) ?? [];
     byVmId.set(vmId, uniqueOrderedStrings([...current, name]));
   }
-  return hideOnlyActiveVmSnapshots(byVmId);
+  return filterActiveVmSnapshots(byVmId);
 }
 
-function hideOnlyActiveVmSnapshots(snapshotsByVmId: Map<string, string[]>): Map<string, string[]> {
+function filterActiveVmSnapshots(snapshotsByVmId: Map<string, string[]>): Map<string, string[]> {
   for (const [vmId, names] of snapshotsByVmId) {
-    if (names.length === 1 && names[0].trim().toLowerCase() === "active vm") {
-      snapshotsByVmId.set(vmId, []);
-    }
+    snapshotsByVmId.set(vmId, names.filter((name) => name.trim().toLowerCase() !== "active vm"));
   }
   return snapshotsByVmId;
 }

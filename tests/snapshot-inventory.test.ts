@@ -126,6 +126,7 @@ function snapshot(managerId: string, managerName: string): SnapshotPayload {
         }
       ],
       vmSnapshots: [
+        { id: "snap-current", description: "Active VM", vm: { id: "vm-1", name: "api-01" } },
         { id: "snap-1", name: "before-patch", vm: { id: "vm-1", name: "api-01" } },
         { id: "snap-2", description: "pre-upgrade", vm: { id: "vm-1", name: "api-01" } },
         { id: "snap-active", description: "Active VM", vm: { id: "vm-2", name: "web-10" } }
@@ -164,6 +165,7 @@ describe("snapshot-backed VM inventory", () => {
       storageUsedGiB: 5,
       snapshotNames: ["before-patch", "pre-upgrade"]
     });
+    expect(list.json().inventory.rows[0].snapshotNames).not.toContain("Active VM");
     expect(list.json().inventory.filterOptions.clusters).toEqual([{ value: "cluster-1", label: "Default" }]);
 
     const allVms = await app.inject({ method: "GET", url: "/api/inventory/snapshot-vms", cookies: cookie });
