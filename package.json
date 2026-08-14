@@ -1,6 +1,6 @@
 {
   "name": "ovirt-inventory",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,7 +12,8 @@
     "test": "vitest run",
     "build": "tsc -p tsconfig.build.json && vite build",
     "start": "node dist/server/server/main.js",
-    "hash-password": "tsx scripts/hash-password.ts"
+    "hash-password": "tsx scripts/hash-password.ts",
+    "compose:config": "docker compose --env-file .env.example config --quiet"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

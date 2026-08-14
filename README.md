@@ -18,60 +18,67 @@ Supported platforms:
 Release image:
 
 ```bash
-docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.11
+docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.12
 ```
 
-## Quick Start
+## Quick Start With Docker Compose
 
-Create a persistent data directory and `.env` file:
+Docker Compose is the supported deployment. It starts `ovirt-inventory` with PostgreSQL, persistent storage for both application state and normalized inventory, and Capacity metrics collection enabled.
 
 ```bash
-mkdir -p ./data
-cat > ./data/.env <<'EOF'
-OVIRT_INVENTORY_ADMIN_USERNAME=admin
-OVIRT_INVENTORY_ADMIN_PASSWORD=replace-with-an-admin-password
-OVIRT_INVENTORY_SESSION_SECRET=replace-with-a-long-random-session-secret
-OVIRT_INVENTORY_SECURE_COOKIES=false
-OVIRT_INVENTORY_ENCRYPTION_KEY=replace-with-a-long-random-encryption-key
-EOF
+cp .env.example .env
 ```
 
-`OVIRT_INVENTORY_SESSION_SECRET` and `OVIRT_INVENTORY_ENCRYPTION_KEY` can be generated with:
+Generate URL-safe secrets with OpenSSL, then replace the matching values in `.env`:
 
 ```bash
-openssl rand -base64 32
+openssl rand -base64 32  # OVIRT_INVENTORY_SESSION_SECRET
+openssl rand -base64 32  # OVIRT_INVENTORY_ENCRYPTION_KEY
+openssl rand -base64 24  # OVIRT_INVENTORY_ADMIN_PASSWORD
+openssl rand -hex 32    # POSTGRES_PASSWORD
 ```
 
-Start the app:
+Start the stack:
 
 ```bash
-docker run --rm \
-  --name ovirt-stocktake \
-  -p 3000:3000 \
-  -v "$PWD/data:/data" \
-  ghcr.io/dennis-au/ovirt_stocktake:latest
+docker compose pull
+docker compose up -d
 ```
 
-Open the app at `http://localhost:3000`.
-Keep `OVIRT_INVENTORY_SECURE_COOKIES=false` when serving the app directly over HTTP. Set it to `true` only when the app is served through HTTPS, such as behind a TLS reverse proxy.
+Open the app at `http://localhost:3001`. Compose does not publish PostgreSQL to the host. Keep `OVIRT_INVENTORY_SECURE_COOKIES=false` for direct HTTP access; set it to `true` behind an HTTPS reverse proxy.
 
-The container loads `/data/.env` by default and stores SQLite data under `/data/ovirt-inventory.sqlite`.
-The entrypoint fixes ownership of the mounted `/data` directory before starting the app as the non-root `node` user, so root-created host directories can still be used for SQLite storage.
+The `inventory_data` volume stores SQLite-backed application state such as login sessions, encrypted Manager credentials, snapshots, and saved views. The `postgres_data` volume stores normalized inventory and the separate Capacity metric samples. Stop the stack with `docker compose down`; add `-v` only when intentionally deleting both persistent stores.
 
-For production, prefer `OVIRT_INVENTORY_ADMIN_PASSWORD_HASH` instead of `OVIRT_INVENTORY_ADMIN_PASSWORD`. The plaintext password fallback is hashed in memory at startup and is provided for simple container-only setup.
+To use a different published image, set `OVIRT_INVENTORY_IMAGE` in `.env`. For example, use `ghcr.io/dennis-au/ovirt_stocktake:latest` after reviewing the release you intend to run.
+
+## Downloadable Compose Bundle
+
+Each GitHub release includes an `ovirt-inventory-compose-v0.1.12.tar.gz` deployment bundle containing `compose.yaml`, `.env.example`, and this README. Download, extract, create the editable `.env`, then start the app:
+
+```bash
+curl -LO https://github.com/dennis-au/ovirt_stocktake/releases/download/v0.1.12/ovirt-inventory-compose-v0.1.12.tar.gz
+tar -xzf ovirt-inventory-compose-v0.1.12.tar.gz
+cd ovirt-inventory-compose-v0.1.12
+cp .env.example .env
+# Edit .env with the OpenSSL-generated values above.
+docker compose pull
+docker compose up -d
+```
 
 ## Runtime Configuration
 
 | Variable | Purpose |
 | --- | --- |
+| `OVIRT_INVENTORY_HOST_PORT` | Host port for Docker Compose. Defaults to `3001`. |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | PostgreSQL Compose service settings. `POSTGRES_PASSWORD` must be supplied. |
 | `OVIRT_INVENTORY_PORT` | HTTP port inside the container. Defaults to `3000`. |
-| `OVIRT_INVENTORY_ENV_FILE` | Optional `.env` file path. Defaults to `/data/.env` in the container. |
+| `OVIRT_INVENTORY_ENV_FILE` | Optional `.env` file path for non-Compose container deployments. Defaults to `/data/.env` in the container. |
 | `OVIRT_INVENTORY_DB_PATH` | SQLite database path. Defaults to `/data/ovirt-inventory.sqlite`. |
 | `OVIRT_INVENTORY_DATABASE_URL` | PostgreSQL connection URL for normalized inventory and Capacity metrics. |
 | `OVIRT_INVENTORY_DATABASE_SSL` | Require SSL for the PostgreSQL connection. Defaults to `false`. |
-| `OVIRT_INVENTORY_METRICS_BACKEND` | Set to `postgres`, `timescale`, or `timescaledb` to enable Capacity metrics collection. Defaults to `none`. |
+| `OVIRT_INVENTORY_METRICS_BACKEND` | Set to `postgres`, `timescale`, or `timescaledb` to enable Capacity metrics collection. Compose sets this to `postgres`. |
 | `OVIRT_INVENTORY_METRICS_SYNC_MINUTES` | Capacity metrics collection cadence. Defaults to `5`. |
-| `OVIRT_INVENTORY_COLLECTOR_ENABLED` | Enables scheduled inventory and Capacity metrics collection. Defaults to `false`. |
+| `OVIRT_INVENTORY_COLLECTOR_ENABLED` | Enables scheduled inventory and Capacity metrics collection. Compose sets this to `true`. |
 | `OVIRT_INVENTORY_ENCRYPTION_KEY` | Required for encrypting saved oVirt Manager credentials. |
 | `OVIRT_INVENTORY_SESSION_SECRET` | Required session signing secret for app login. |
 | `OVIRT_INVENTORY_SECURE_COOKIES` | Set `false` for direct HTTP access, or `true` behind HTTPS. Defaults to `true` in production when unset. |
@@ -85,7 +92,7 @@ Prefer trusted CA certificates through `NODE_EXTRA_CA_CERTS` instead of insecure
 
 ## Capacity Metrics
 
-Capacity uses collected oVirt VM and host statistics plus storage-domain utilization; it does not use browser-side dummy data. Configure PostgreSQL with `OVIRT_INVENTORY_DATABASE_URL`, choose a supported metrics backend, and enable the collector. An operator can run the initial collection with `POST /api/metrics/collect`; scheduled collection then follows `OVIRT_INVENTORY_METRICS_SYNC_MINUTES`.
+Capacity uses collected oVirt VM and host statistics plus storage-domain utilization; it does not use browser-side dummy data. Capacity requires PostgreSQL and a supported metrics backend. The supplied Compose deployment enforces both requirements by connecting the app to its bundled PostgreSQL service, setting `OVIRT_INVENTORY_METRICS_BACKEND=postgres`, and enabling the collector. After configuring one or more Managers, run the first collection from the Managers page or wait for the configured `OVIRT_INVENTORY_METRICS_SYNC_MINUTES` cadence.
 
 ## Settings
 
@@ -111,6 +118,7 @@ npm ci
 npm run typecheck
 npm test
 npm run build
+npm run compose:config
 ```
 
 Build a multi-arch container image:
