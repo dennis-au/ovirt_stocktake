@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { listAuditLogs } from "./audit.js";
 import { registerAuthRoutes } from "./auth.js";
+import { registerCapacityRoutes } from "./capacity.js";
 import { registerCollectionRunRoutes } from "./collection-runs.js";
 import { registerCollectionRoutes } from "./collection.js";
 import type { AppConfig } from "./config.js";
@@ -15,10 +16,12 @@ import { registerExcelRoutes } from "./excel.js";
 import { registerInventoryRoutes } from "./inventory.js";
 import { registerManagerRoutes } from "./managers.js";
 import { registerMetricRoutes } from "./metrics.js";
+import { startMetricsScheduler } from "./metrics-scheduler.js";
 import type { ConnectablePostgres } from "./postgres/inventory.js";
 import { requireRole, roles } from "./rbac.js";
 import { registerSavedViewRoutes } from "./saved-views.js";
 import { startCollectionScheduler } from "./scheduler.js";
+import { registerSettingsRoutes } from "./settings.js";
 import { registerSnapshotInventoryRoutes } from "./snapshot-inventory.js";
 import { registerSnapshotRoutes } from "./snapshots.js";
 
@@ -47,11 +50,21 @@ export function buildApp({ db, config, inventoryDb }: BuildAppOptions): FastifyI
   registerExcelRoutes(app, db);
   registerInventoryRoutes(app, inventoryDb);
   registerSnapshotInventoryRoutes(app, db);
-  registerMetricRoutes(app, inventoryDb);
+  registerMetricRoutes(app, db, config, inventoryDb);
+  registerCapacityRoutes(app, config, inventoryDb);
   registerExceptionRoutes(app, inventoryDb);
   registerSavedViewRoutes(app, db);
   app.get("/api/audit-logs", { preHandler: requireRole(roles.admin) }, async () => ({ auditLogs: listAuditLogs(db) }));
-  startCollectionScheduler(app, db, config, inventoryDb);
+  let scheduler = startCollectionScheduler(app, db, config, inventoryDb, { registerCloseHook: false });
+  const metricsScheduler = startMetricsScheduler(app, db, config, inventoryDb, { registerCloseHook: false });
+  registerSettingsRoutes(app, db, config, () => {
+    scheduler?.stop();
+    scheduler = startCollectionScheduler(app, db, config, inventoryDb, { registerCloseHook: false });
+  });
+  app.addHook("onClose", async () => {
+    scheduler?.stop();
+    metricsScheduler?.stop();
+  });
 
   const currentDir = dirname(fileURLToPath(import.meta.url));
   const frontendDist = [join(process.cwd(), "dist", "frontend"), join(currentDir, "..", "..", "frontend")].find(

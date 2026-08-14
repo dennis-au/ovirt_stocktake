@@ -10,6 +10,7 @@ import { collectOvirtSnapshot, type OvirtCollectionTarget } from "./ovirt.js";
 import { replaceCurrentInventory, type ConnectablePostgres } from "./postgres/inventory.js";
 import { saveSnapshotPayload, type SnapshotDetail } from "./snapshots.js";
 import { requireRole, roles } from "./rbac.js";
+import { applySnapshotRetention } from "./settings.js";
 import {
   emptyInventoryResources,
   resourceKeys,
@@ -88,7 +89,7 @@ export function registerCollectionRoutes(
       return;
     }
 
-    const snapshot = await collectAndSaveManagerSnapshot(db, manager, encryptionKey, config.ovirtAllowInsecureTls, inventoryDb);
+    const snapshot = await collectAndSaveManagerSnapshot(db, manager, encryptionKey, config.ovirtAllowInsecureTls, config, inventoryDb);
     recordAudit(db, {
       actor: currentSession(db, request)?.username,
       action: "collection.completed",
@@ -107,7 +108,7 @@ export function registerCollectionRoutes(
 
     const snapshots: SnapshotDetail[] = [];
     for (const manager of listEnabledManagers(db)) {
-      const snapshot = await collectAndSaveManagerSnapshot(db, manager, encryptionKey, config.ovirtAllowInsecureTls, inventoryDb);
+      const snapshot = await collectAndSaveManagerSnapshot(db, manager, encryptionKey, config.ovirtAllowInsecureTls, config, inventoryDb);
       snapshots.push(snapshot);
       recordAudit(db, {
         actor: currentSession(db, request)?.username,
@@ -137,7 +138,7 @@ export async function collectEnabledManagers(
 
   const snapshots: SnapshotDetail[] = [];
   for (const manager of listEnabledManagers(db)) {
-    snapshots.push(await collectAndSaveManagerSnapshot(db, manager, config.credentialEncryptionKey, config.ovirtAllowInsecureTls, inventoryDb));
+    snapshots.push(await collectAndSaveManagerSnapshot(db, manager, config.credentialEncryptionKey, config.ovirtAllowInsecureTls, config, inventoryDb));
   }
   return snapshots;
 }
@@ -236,6 +237,7 @@ async function collectAndSaveManagerSnapshot(
   manager: ManagerCredentialRecord,
   encryptionKey: string,
   allowInsecureTls: boolean,
+  config: AppConfig,
   inventoryDb?: ConnectablePostgres
 ): Promise<SnapshotDetail> {
   let target: OvirtCollectionTarget;
@@ -248,7 +250,9 @@ async function collectAndSaveManagerSnapshot(
       password: decryptSecret(manager.password_ciphertext, encryptionKey)
     };
   } catch {
-    return saveSnapshotPayload(db, failedSnapshot(manager, "Stored oVirt credentials could not be decrypted"));
+    const snapshot = saveSnapshotPayload(db, failedSnapshot(manager, "Stored oVirt credentials could not be decrypted"));
+    applySnapshotRetention(db, config);
+    return snapshot;
   }
 
   let payload: SnapshotPayload;
@@ -256,10 +260,13 @@ async function collectAndSaveManagerSnapshot(
     payload = await collectOvirtSnapshot(target, { allowInsecureTls: allowInsecureTlsForManager(allowInsecureTls, manager) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Collected snapshot could not be saved";
-    return saveSnapshotPayload(db, failedSnapshot(manager, message));
+    const snapshot = saveSnapshotPayload(db, failedSnapshot(manager, message));
+    applySnapshotRetention(db, config);
+    return snapshot;
   }
 
   const snapshot = saveSnapshotPayload(db, payload);
+  applySnapshotRetention(db, config);
   try {
     await persistNormalizedInventory(inventoryDb, snapshot);
   } catch (error) {

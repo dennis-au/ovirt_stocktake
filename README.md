@@ -18,7 +18,7 @@ Supported platforms:
 Release image:
 
 ```bash
-docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.10
+docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.11
 ```
 
 ## Quick Start
@@ -67,6 +67,11 @@ For production, prefer `OVIRT_INVENTORY_ADMIN_PASSWORD_HASH` instead of `OVIRT_I
 | `OVIRT_INVENTORY_PORT` | HTTP port inside the container. Defaults to `3000`. |
 | `OVIRT_INVENTORY_ENV_FILE` | Optional `.env` file path. Defaults to `/data/.env` in the container. |
 | `OVIRT_INVENTORY_DB_PATH` | SQLite database path. Defaults to `/data/ovirt-inventory.sqlite`. |
+| `OVIRT_INVENTORY_DATABASE_URL` | PostgreSQL connection URL for normalized inventory and Capacity metrics. |
+| `OVIRT_INVENTORY_DATABASE_SSL` | Require SSL for the PostgreSQL connection. Defaults to `false`. |
+| `OVIRT_INVENTORY_METRICS_BACKEND` | Set to `postgres`, `timescale`, or `timescaledb` to enable Capacity metrics collection. Defaults to `none`. |
+| `OVIRT_INVENTORY_METRICS_SYNC_MINUTES` | Capacity metrics collection cadence. Defaults to `5`. |
+| `OVIRT_INVENTORY_COLLECTOR_ENABLED` | Enables scheduled inventory and Capacity metrics collection. Defaults to `false`. |
 | `OVIRT_INVENTORY_ENCRYPTION_KEY` | Required for encrypting saved oVirt Manager credentials. |
 | `OVIRT_INVENTORY_SESSION_SECRET` | Required session signing secret for app login. |
 | `OVIRT_INVENTORY_SECURE_COOKIES` | Set `false` for direct HTTP access, or `true` behind HTTPS. Defaults to `true` in production when unset. |
@@ -77,6 +82,17 @@ For production, prefer `OVIRT_INVENTORY_ADMIN_PASSWORD_HASH` instead of `OVIRT_I
 | `NODE_EXTRA_CA_CERTS` | Preferred way to trust private oVirt Manager CA certificates. |
 
 Prefer trusted CA certificates through `NODE_EXTRA_CA_CERTS` instead of insecure TLS. Do not put oVirt passwords, bearer tokens, or lab credentials in image tags, README examples, logs, or exports.
+
+## Capacity Metrics
+
+Capacity uses collected oVirt VM and host statistics plus storage-domain utilization; it does not use browser-side dummy data. Configure PostgreSQL with `OVIRT_INVENTORY_DATABASE_URL`, choose a supported metrics backend, and enable the collector. An operator can run the initial collection with `POST /api/metrics/collect`; scheduled collection then follows `OVIRT_INVENTORY_METRICS_SYNC_MINUTES`.
+
+## Settings
+
+Admins can open **Settings** in the app to configure miscellaneous snapshot policy:
+
+- Snapshot interval in minutes. This controls the scheduled backend collection interval when `OVIRT_INVENTORY_COLLECTOR_ENABLED=true`; the environment value remains the default until it is changed in the app.
+- Snapshot data retention in days. Set `0` to keep snapshot history indefinitely. When set above `0`, snapshots older than the retention window are pruned after settings are saved and after future collection runs.
 
 ## Features
 

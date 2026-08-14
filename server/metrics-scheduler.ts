@@ -1,49 +1,51 @@
 import type { FastifyInstance } from "fastify";
 import { recordAudit } from "./audit.js";
-import { collectEnabledManagers } from "./collection.js";
 import type { AppConfig } from "./config.js";
 import type { SqliteDatabase } from "./db.js";
+import { collectEnabledManagerMetrics, metricsStorageEnabled } from "./metrics-collection.js";
 import type { ConnectablePostgres } from "./postgres/inventory.js";
-import { snapshotIntervalMinutes } from "./settings.js";
 
-export interface CollectionScheduler {
+export interface MetricsScheduler {
   intervalMs: number;
   stop: () => void;
   triggerNow: () => Promise<void>;
 }
 
-export function startCollectionScheduler(
+export function startMetricsScheduler(
   app: FastifyInstance,
   db: SqliteDatabase,
   config: AppConfig,
   inventoryDb?: ConnectablePostgres,
   options: { registerCloseHook?: boolean } = {}
-): CollectionScheduler | undefined {
-  if (!config.collector.enabled) {
+): MetricsScheduler | undefined {
+  if (!config.collector.enabled || !metricsStorageEnabled(config, inventoryDb)) {
     return undefined;
   }
 
-  const intervalMinutes = snapshotIntervalMinutes(db, config);
-  const intervalMs = intervalMinutes * 60_000;
+  const intervalMs = config.collector.metricsSyncMinutes * 60_000;
   let running = false;
-
   const triggerNow = async (): Promise<void> => {
     if (running) {
       return;
     }
     running = true;
     try {
-      const snapshots = await collectEnabledManagers(db, config, inventoryDb);
+      const results = await collectEnabledManagerMetrics(db, config, inventoryDb);
       recordAudit(db, {
         actor: "scheduler",
-        action: "collection.scheduled_completed",
-        metadata: { managers: snapshots.length, intervalMinutes }
+        action: "metrics.scheduled_completed",
+        metadata: {
+          managers: results.length,
+          samples: results.reduce((total, result) => total + result.sampleCount, 0),
+          errors: results.reduce((total, result) => total + result.errors.length, 0),
+          intervalMinutes: config.collector.metricsSyncMinutes
+        }
       });
     } catch (error) {
       recordAudit(db, {
         actor: "scheduler",
-        action: "collection.scheduled_failed",
-        metadata: { message: error instanceof Error ? error.message : "Scheduled collection failed" }
+        action: "metrics.scheduled_failed",
+        metadata: { message: error instanceof Error ? error.message : "Scheduled metrics collection failed" }
       });
     } finally {
       running = false;
@@ -63,6 +65,5 @@ export function startCollectionScheduler(
       stop();
     });
   }
-
   return { intervalMs, stop, triggerNow };
 }

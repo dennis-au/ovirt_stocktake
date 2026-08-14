@@ -1,4 +1,4 @@
-import { Download, GripVertical, Layers3, RefreshCw, RotateCcw, Server, Table2 } from "lucide-react";
+import { Download, GripVertical, Layers3, RefreshCw, RotateCcw, Server, Table2, Waypoints } from "lucide-react";
 import { type DragEvent, useMemo, useState } from "react";
 import { relationshipsExportUrl, type RelationshipResponse, type RelationshipRow } from "./api";
 
@@ -79,16 +79,16 @@ export function RelationshipReportBuilder({ error, loading, relationships, onRef
     <section className="relationships-panel simple-relationships-page" aria-labelledby="relationships-title">
       <div className="section-heading with-actions">
         <div>
-          <Layers3 aria-hidden="true" size={20} />
+          <Waypoints aria-hidden="true" size={20} />
           <div>
-            <h2 id="relationships-title">Relationships</h2>
-            <p>{relationships ? `${relationships.total} manager, cluster, host, VM relationships` : "Build a relationship table by dragging items."}</p>
+            <h2 id="relationships-title">Topology</h2>
+            <p>{relationships ? `${relationships.total} manager, cluster, host, VM topology records` : "Build a topology table by dragging items."}</p>
           </div>
         </div>
         <div className="topbar-actions">
-          <button className="button secondary" type="button" disabled={loading} onClick={onRefresh}>
+          <button className="button secondary" type="button" disabled={loading} aria-busy={loading} onClick={onRefresh}>
             <RefreshCw aria-hidden="true" size={16} />
-            Refresh
+            {loading ? "Refreshing" : "Refresh"}
           </button>
           <a className="button secondary" href={relationshipsExportUrl([...relationshipExportColumns])}>
             <Download aria-hidden="true" size={16} />
@@ -102,7 +102,7 @@ export function RelationshipReportBuilder({ error, loading, relationships, onRef
           {error}
         </p>
       )}
-      {loading && <p className="muted">Loading relationships</p>}
+      {loading && <p className="muted">Loading topology</p>}
 
       <div className="relationship-builder-shell">
         <aside className="relationship-source-panel" aria-label="Managers">
@@ -136,7 +136,7 @@ export function RelationshipReportBuilder({ error, loading, relationships, onRef
                 </span>
               </button>
             ))}
-            {!managers.length && <p className="empty-state">No managers available from relationship data</p>}
+            {!managers.length && <p className="empty-state">No managers available from topology data</p>}
           </div>
         </aside>
 
@@ -148,7 +148,7 @@ export function RelationshipReportBuilder({ error, loading, relationships, onRef
           >
             <Table2 aria-hidden="true" size={18} />
             <div>
-              <h3>Relationship Table</h3>
+              <h3>Topology Table</h3>
               <p>{selectedManager ? selectedManager.name : draggingLabel ? `Drop ${draggingLabel} here` : "Drag a manager here to start from a blank table."}</p>
             </div>
             {selectedManager && (

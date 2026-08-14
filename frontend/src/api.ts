@@ -1,4 +1,5 @@
 import type { InventoryResources, SnapshotPayload, SnapshotStatus } from "../../shared/snapshot";
+import type { CapacityDataset } from "./capacity-model";
 
 export interface HealthResponse {
   ok: boolean;
@@ -251,6 +252,18 @@ export interface SavedViewInput {
   visibility?: "private" | "shared";
 }
 
+export interface AppSettings {
+  snapshotIntervalMinutes: number;
+  snapshotRetentionDays: number;
+  collectorEnabled: boolean;
+  updatedAt?: string;
+}
+
+export interface AppSettingsInput {
+  snapshotIntervalMinutes: number;
+  snapshotRetentionDays: number;
+}
+
 export async function getHealth(): Promise<HealthResponse> {
   const response = await fetch("/api/health");
   if (!response.ok) {
@@ -265,6 +278,37 @@ export async function getSession(): Promise<SessionResponse> {
     throw new Error(`Session check failed with HTTP ${response.status}`);
   }
   return response.json() as Promise<SessionResponse>;
+}
+
+export async function getCapacity(): Promise<CapacityDataset> {
+  const response = await fetch("/api/capacity");
+  const body = (await response.json().catch(() => undefined)) as { capacity?: CapacityDataset; error?: string } | undefined;
+  if (!response.ok || !body?.capacity) {
+    throw new Error(body?.error ?? `Capacity request failed with HTTP ${response.status}`);
+  }
+  return body.capacity;
+}
+
+export async function getSettings(): Promise<AppSettings> {
+  const response = await fetch("/api/settings");
+  const body = (await response.json().catch(() => undefined)) as { settings?: AppSettings; error?: string } | undefined;
+  if (!response.ok || !body?.settings) {
+    throw new Error(body?.error ?? `Settings request failed with HTTP ${response.status}`);
+  }
+  return body.settings;
+}
+
+export async function updateSettings(input: AppSettingsInput): Promise<AppSettings> {
+  const response = await fetch("/api/settings", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+  const body = (await response.json().catch(() => undefined)) as { settings?: AppSettings; error?: string } | undefined;
+  if (!response.ok || !body?.settings) {
+    throw new Error(body?.error ?? `Settings update failed with HTTP ${response.status}`);
+  }
+  return body.settings;
 }
 
 export async function login(username: string, password: string): Promise<SessionResponse> {

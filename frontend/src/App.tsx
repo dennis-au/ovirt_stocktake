@@ -3,22 +3,27 @@ import {
   AlertTriangle,
   ArrowUpDown,
   CheckCircle2,
+  ChartLine,
   Clock,
   Database,
   Download,
   GripVertical,
   HardDrive,
   History,
-  Layers3,
   LayoutDashboard,
   ArrowLeft,
   LogIn,
   LogOut,
+  Menu,
   Network,
+  PackageSearch,
+  PanelLeftOpen,
   Play,
   RefreshCw,
   Save,
   Server,
+  Settings,
+  Waypoints,
   XCircle
 } from "lucide-react";
 import { type ChangeEvent, type FormEvent, useEffect, useState } from "react";
@@ -31,6 +36,7 @@ import {
   getDashboard,
   getDashboardCluster,
   getRelationships,
+  getSettings,
   getSnapshot,
   getSnapshotVmInventory,
   getSession,
@@ -42,7 +48,9 @@ import {
   snapshotVmInventoryExportUrl,
   testManagerCollection,
   updateManager,
+  updateSettings,
   updateSavedView,
+  type AppSettings,
   type DashboardClusterDetail,
   type DashboardClusterSummary,
   type DashboardClusterVm,
@@ -62,8 +70,9 @@ import {
   type SessionResponse
 } from "./api";
 import { RelationshipReportBuilder } from "./RelationshipReportBuilder";
+import { CapacityPage } from "./CapacityPage";
 
-type PageId = "dashboard" | "inventory" | "relationships" | "managers" | "history" | "cluster";
+type PageId = "dashboard" | "inventory" | "capacity" | "relationships" | "managers" | "history" | "settings" | "cluster";
 type SnapshotFilters = { managerId: string; status: string };
 type InventoryColumnKey =
   | "managerName"
@@ -110,11 +119,13 @@ const inventoryColumns: InventoryColumn[] = [
 const defaultInventoryColumnOrder = inventoryColumns.map((column) => column.key);
 
 const pageTitles: Record<PageId, string> = {
-  dashboard: "Dashboard",
+  dashboard: "Overview",
   inventory: "Inventory",
-  relationships: "Relationships",
+  capacity: "Capacity",
+  relationships: "Topology",
   managers: "Managers",
   history: "Snapshot History",
+  settings: "Settings",
   cluster: "Cluster Detail"
 };
 
@@ -151,6 +162,12 @@ export function App() {
   const [relationships, setRelationships] = useState<RelationshipResponse | undefined>();
   const [relationshipsError, setRelationshipsError] = useState("");
   const [relationshipsLoading, setRelationshipsLoading] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [settings, setSettings] = useState<AppSettings | undefined>();
+  const [settingsError, setSettingsError] = useState("");
+  const [settingsMessage, setSettingsMessage] = useState("");
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [selectedSavedViewId, setSelectedSavedViewId] = useState("");
   const [savedViewName, setSavedViewName] = useState("");
@@ -176,6 +193,7 @@ export function App() {
       setClusterDetail(undefined);
       setInventory(undefined);
       setRelationships(undefined);
+      setSettings(undefined);
       setSavedViews([]);
       setSelectedSavedViewId("");
       setSavedViewName("");
@@ -198,6 +216,7 @@ export function App() {
         setDashboardError(error instanceof Error ? error.message : "Dashboard failed");
       });
     void loadInventory(inventoryFilters);
+    void loadSettings();
     void loadSavedViews();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.authenticated]);
@@ -207,6 +226,12 @@ export function App() {
       void loadInventory(inventoryFilters);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, session.authenticated]);
+
+  useEffect(() => {
+    if (session.authenticated && activePage === "settings") {
+      void loadSettings();
+    }
   }, [activePage, session.authenticated]);
 
   useEffect(() => {
@@ -303,6 +328,7 @@ export function App() {
     setClusterDetail(undefined);
     setInventory(undefined);
     setRelationships(undefined);
+    setSettings(undefined);
     setSavedViews([]);
     setSelectedSavedViewId("");
     setSavedViewName("");
@@ -329,6 +355,38 @@ export function App() {
       setRelationshipsError(error instanceof Error ? error.message : "Relationships failed");
     } finally {
       setRelationshipsLoading(false);
+    }
+  }
+
+  async function loadSettings() {
+    setSettingsLoading(true);
+    setSettingsError("");
+    try {
+      setSettings(await getSettings());
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : "Settings failed");
+    } finally {
+      setSettingsLoading(false);
+    }
+  }
+
+  async function handleSettingsSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setSettingsSaving(true);
+    setSettingsError("");
+    setSettingsMessage("");
+    try {
+      const saved = await updateSettings({
+        snapshotIntervalMinutes: Number(form.get("snapshotIntervalMinutes")),
+        snapshotRetentionDays: Number(form.get("snapshotRetentionDays"))
+      });
+      setSettings(saved);
+      setSettingsMessage("Settings saved");
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : "Settings save failed");
+    } finally {
+      setSettingsSaving(false);
     }
   }
 
@@ -580,8 +638,8 @@ export function App() {
   const snapshotStatusOptions = uniqueSnapshotStatuses(snapshots);
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar" aria-label="Primary navigation">
+    <div className={`app-shell ${sidebarCollapsed ? "nav-collapsed" : ""}`}>
+      <aside className="sidebar" aria-label="Primary navigation" aria-hidden={sidebarCollapsed || undefined} inert={sidebarCollapsed || undefined}>
         <div className="sidebar-brand">
           <div className="brand-mark">
             <Database aria-hidden="true" size={17} />
@@ -590,37 +648,59 @@ export function App() {
             <strong>ovirt-inventory</strong>
             <span>Manager snapshots</span>
           </div>
+          <button className="sidebar-toggle" type="button" onClick={() => setSidebarCollapsed(true)} title="Hide navigation" aria-label="Hide navigation">
+            <Menu aria-hidden="true" size={18} />
+          </button>
         </div>
 
         <nav className="sidebar-nav">
-          <a href="#dashboard" aria-current={activePage === "dashboard" ? "page" : undefined}>
-            <LayoutDashboard aria-hidden="true" size={17} />
-            Dashboard
-          </a>
-          <a href="#inventory" aria-current={activePage === "inventory" ? "page" : undefined}>
-            <Activity aria-hidden="true" size={17} />
-            Inventory
-          </a>
-          <a href="#relationships" aria-current={activePage === "relationships" ? "page" : undefined}>
-            <Layers3 aria-hidden="true" size={17} />
-            Relationships
-          </a>
-          <a href="#managers" aria-current={activePage === "managers" ? "page" : undefined}>
-            <Server aria-hidden="true" size={17} />
-            Managers
-          </a>
-          <a href="#history" aria-current={activePage === "history" ? "page" : undefined}>
-            <History aria-hidden="true" size={17} />
-            History
-          </a>
+          <div className="sidebar-nav-group">
+            <a href="#dashboard" aria-current={activePage === "dashboard" ? "page" : undefined}>
+              <LayoutDashboard aria-hidden="true" size={17} />
+              Overview
+            </a>
+            <a href="#inventory" aria-current={activePage === "inventory" ? "page" : undefined}>
+              <PackageSearch aria-hidden="true" size={17} />
+              Inventory
+            </a>
+            <a href="#capacity" aria-current={activePage === "capacity" ? "page" : undefined}>
+              <ChartLine aria-hidden="true" size={17} />
+              Capacity
+            </a>
+            <a href="#relationships" aria-current={activePage === "relationships" ? "page" : undefined}>
+              <Waypoints aria-hidden="true" size={17} />
+              Topology
+            </a>
+            <a href="#managers" aria-current={activePage === "managers" ? "page" : undefined}>
+              <Server aria-hidden="true" size={17} />
+              Managers
+            </a>
+          </div>
+          <div className="sidebar-nav-group sidebar-nav-bottom">
+            <a href="#history" aria-current={activePage === "history" ? "page" : undefined}>
+              <History aria-hidden="true" size={17} />
+              History
+            </a>
+            <a href="#settings" aria-current={activePage === "settings" ? "page" : undefined}>
+              <Settings aria-hidden="true" size={17} />
+              Settings
+            </a>
+          </div>
         </nav>
       </aside>
 
       <div className="main-shell">
         <header className="topbar">
-          <div>
+          <div className="topbar-title">
+            {sidebarCollapsed && (
+              <button className="icon-button nav-open-button" type="button" onClick={() => setSidebarCollapsed(false)} title="Show navigation" aria-label="Show navigation">
+                <PanelLeftOpen aria-hidden="true" size={18} />
+              </button>
+            )}
+            <div>
             <p className="eyebrow">oVirt manager inventory</p>
             <h1 id="page-title">{session.authenticated ? pageTitles[activePage] : "Login"}</h1>
+            </div>
           </div>
           <div className="topbar-actions">
             {session.authenticated ? (
@@ -633,7 +713,7 @@ export function App() {
           </div>
         </header>
 
-        <main className={`content-shell ${activePage === "inventory" || activePage === "relationships" ? "inventory-content-shell" : ""}`} aria-labelledby="page-title">
+        <main className={`content-shell ${activePage === "inventory" || activePage === "capacity" || activePage === "relationships" ? "inventory-content-shell" : ""}`} aria-labelledby="page-title">
           {authStatus === "checking" && <p className="muted">Checking session</p>}
 
           {authStatus === "ready" && !session.authenticated && (
@@ -647,7 +727,7 @@ export function App() {
                   Password
                   <input name="password" type="password" autoComplete="current-password" required />
                 </label>
-                <button className="button" type="submit" disabled={loginPending}>
+                <button className="button" type="submit" disabled={loginPending} aria-busy={loginPending}>
                   <LogIn aria-hidden="true" size={17} />
                   {loginPending ? "Signing in" : "Login"}
                 </button>
@@ -666,7 +746,7 @@ export function App() {
                 <div>
                   <LayoutDashboard aria-hidden="true" size={20} />
                   <div>
-                    <h2 id="dashboard">Dashboard</h2>
+                    <h2 id="dashboard">Overview</h2>
                     <p>
                       {latestSnapshot
                         ? `Latest snapshot: ${latestSnapshot.managerName} at ${new Date(latestSnapshot.collectedAt).toLocaleString()}`
@@ -718,7 +798,7 @@ export function App() {
                 </div>
                 <a className="button secondary" href="#dashboard">
                   <ArrowLeft aria-hidden="true" size={16} />
-                  Dashboard
+                  Overview
                 </a>
               </div>
               {clusterError && (
@@ -768,16 +848,16 @@ export function App() {
             <section className="inventory-panel" aria-labelledby="inventory-title">
               <div className="section-heading with-actions">
                 <div>
-                  <Activity aria-hidden="true" size={20} />
+                  <PackageSearch aria-hidden="true" size={20} />
                   <div>
                     <h2 id="inventory-title">Inventory</h2>
                     <p>{inventory ? `${inventory.total} VM records from latest snapshots` : "Latest snapshot VM inventory"}</p>
                   </div>
                 </div>
                 <div className="topbar-actions">
-                  <button className="button secondary" type="button" disabled={inventoryLoading} onClick={() => void loadInventory(inventoryFilters)}>
+                  <button className="button secondary" type="button" disabled={inventoryLoading} aria-busy={inventoryLoading} onClick={() => void loadInventory(inventoryFilters)}>
                     <RefreshCw aria-hidden="true" size={16} />
-                    Refresh
+                    {inventoryLoading ? "Refreshing" : "Refresh"}
                   </button>
                   <a className="button secondary" href={snapshotVmInventoryExportUrl("csv", inventoryFilters)}>
                     <Download aria-hidden="true" size={16} />
@@ -810,9 +890,9 @@ export function App() {
                     placeholder="Operations review"
                   />
                 </label>
-                <button className="button secondary" type="submit" disabled={savingView}>
+                <button className="button secondary" type="submit" disabled={savingView} aria-busy={savingView}>
                   <Save aria-hidden="true" size={16} />
-                  {selectedSavedViewId ? "Update View" : "Save View"}
+                  {savingView ? "Saving View" : selectedSavedViewId ? "Update View" : "Save View"}
                 </button>
               </form>
               {savedViewError && (
@@ -867,8 +947,8 @@ export function App() {
                   </select>
                 </label>
                 <div className="manager-actions">
-                  <button className="button" type="submit" disabled={inventoryLoading}>
-                    Filter
+                  <button className="button" type="submit" disabled={inventoryLoading} aria-busy={inventoryLoading}>
+                    {inventoryLoading ? "Filtering" : "Filter"}
                   </button>
                   <button className="button secondary" type="button" onClick={() => void clearInventoryFilters()}>
                     Clear
@@ -896,6 +976,8 @@ export function App() {
             </section>
           )}
 
+          {session.authenticated && activePage === "capacity" && <CapacityPage />}
+
           {session.authenticated && activePage === "relationships" && (
             <RelationshipReportBuilder
               error={relationshipsError}
@@ -903,6 +985,80 @@ export function App() {
               relationships={relationships}
               onRefresh={() => void loadRelationships()}
             />
+          )}
+
+          {session.authenticated && activePage === "settings" && (
+            <section className="settings-panel" aria-labelledby="settings-title">
+              <div className="section-heading with-actions">
+                <div>
+                  <Settings aria-hidden="true" size={20} />
+                  <div>
+                    <h2 id="settings-title">Settings</h2>
+                    <p>Configure snapshot collection and history retention.</p>
+                  </div>
+                </div>
+                <button className="button secondary" type="button" disabled={settingsLoading} aria-busy={settingsLoading} onClick={() => void loadSettings()}>
+                  <RefreshCw aria-hidden="true" size={16} />
+                  {settingsLoading ? "Refreshing" : "Refresh"}
+                </button>
+              </div>
+              {settingsError && (
+                <p className="form-error" role="alert">
+                  {settingsError}
+                </p>
+              )}
+              {settingsMessage && <p className="form-success">{settingsMessage}</p>}
+              {settingsLoading && <p className="muted">Loading settings</p>}
+              {settings && (
+                <form className="settings-form" key={`${settings.snapshotIntervalMinutes}:${settings.snapshotRetentionDays}`} onSubmit={(event) => void handleSettingsSubmit(event)}>
+                  <div className="form-card-header">
+                    <div>
+                      <h3>Snapshot Policy</h3>
+                      <p>These settings apply to backend snapshot collection and stored snapshot history.</p>
+                    </div>
+                  </div>
+                  <div className="settings-fields">
+                    <label>
+                      <span>Snapshot interval</span>
+                      <input
+                        name="snapshotIntervalMinutes"
+                        type="number"
+                        min="1"
+                        max="1440"
+                        step="1"
+                        defaultValue={settings.snapshotIntervalMinutes}
+                        required
+                      />
+                    </label>
+                    <label>
+                      <span>Snapshot data retention</span>
+                      <input
+                        name="snapshotRetentionDays"
+                        type="number"
+                        min="0"
+                        max="3650"
+                        step="1"
+                        defaultValue={settings.snapshotRetentionDays}
+                        required
+                      />
+                    </label>
+                  </div>
+                  <div className="settings-summary-row" aria-label="Settings summary">
+                    <span className="state-pill">Interval: every {settings.snapshotIntervalMinutes} minutes</span>
+                    <span className="state-pill">
+                      Retention: {settings.snapshotRetentionDays === 0 ? "keep indefinitely" : `${settings.snapshotRetentionDays} days`}
+                    </span>
+                    <span className="state-pill">{settings.updatedAt ? `Updated: ${new Date(settings.updatedAt).toLocaleString()}` : "Using defaults"}</span>
+                  </div>
+                  <div className="manager-actions form-actions">
+                    <button className="button" type="submit" disabled={settingsSaving} aria-busy={settingsSaving}>
+                      <Save aria-hidden="true" size={16} />
+                      {settingsSaving ? "Saving" : "Save Settings"}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </section>
           )}
 
           {session.authenticated && activePage === "managers" && (
@@ -915,9 +1071,9 @@ export function App() {
                     <p>Save encrypted oVirt credentials and manually trigger backend collection.</p>
                   </div>
                 </div>
-                <button className="button" type="button" disabled={Boolean(collectionBusyId)} onClick={() => void handleCollectAll()}>
+                <button className="button" type="button" disabled={Boolean(collectionBusyId)} aria-busy={collectionBusyId === "all"} onClick={() => void handleCollectAll()}>
                   <Play aria-hidden="true" size={16} />
-                  Collect All
+                  {collectionBusyId === "all" ? "Collecting" : "Collect All"}
                 </button>
               </div>
               <form className="manager-form" key={editingManager?.id ?? "new-manager"} onSubmit={handleManagerSubmit}>
@@ -957,7 +1113,7 @@ export function App() {
                   </label>
                 </div>
                 <div className="manager-actions form-actions">
-                  <button className="button secondary" type="submit" name="managerAction" value="test" disabled={testCollectionPending}>
+                  <button className="button secondary" type="submit" name="managerAction" value="test" disabled={testCollectionPending} aria-busy={testCollectionPending}>
                     <Play aria-hidden="true" size={16} />
                     {testCollectionPending ? "Testing" : "Test Collection"}
                   </button>
@@ -1020,10 +1176,11 @@ export function App() {
                       className="button secondary"
                       type="button"
                       disabled={Boolean(collectionBusyId) || !manager.enabled}
+                      aria-busy={collectionBusyId === manager.id}
                       onClick={() => void handleCollect(manager)}
                     >
                       <Play aria-hidden="true" size={16} />
-                      Collect
+                      {collectionBusyId === manager.id ? "Collecting" : "Collect"}
                     </button>
                     <button className="button secondary" type="button" onClick={() => setEditingManager(manager)}>
                       Edit
@@ -1584,6 +1741,9 @@ function pageFromHash(): PageId {
   if (hash === "inventory") {
     return "inventory";
   }
+  if (hash === "capacity") {
+    return "capacity";
+  }
   if (hash === "relationships") {
     return "relationships";
   }
@@ -1592,6 +1752,9 @@ function pageFromHash(): PageId {
   }
   if (hash === "history" || hash === "snapshot-title") {
     return "history";
+  }
+  if (hash === "settings") {
+    return "settings";
   }
   return "dashboard";
 }

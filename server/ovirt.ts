@@ -24,6 +24,29 @@ export interface OvirtCollectorOptions {
   allowInsecureTls?: boolean;
 }
 
+export type OvirtCapacityResourceType = "vm" | "host" | "storage_domain";
+export type OvirtCapacityMetricName =
+  | "cpu.usage.percent"
+  | "memory.usage.percent"
+  | "network.rx.mbps"
+  | "network.tx.mbps"
+  | "storage.used.percent";
+
+export interface OvirtCapacityMetricSample {
+  resourceType: OvirtCapacityResourceType;
+  resourceId: string;
+  metricName: OvirtCapacityMetricName;
+  value: number;
+  labels: Record<string, unknown>;
+}
+
+export interface OvirtCapacityMetricCollection {
+  collectedAt: string;
+  samples: OvirtCapacityMetricSample[];
+  warnings: CollectionIssue[];
+  errors: CollectionIssue[];
+}
+
 interface ResourceSpec {
   key: ResourceKey;
   path: string;
@@ -129,6 +152,35 @@ export async function collectOvirtSnapshot(target: OvirtCollectionTarget, option
   };
 }
 
+export async function collectOvirtCapacityMetrics(
+  target: OvirtCollectionTarget,
+  options: OvirtCollectorOptions = {}
+): Promise<OvirtCapacityMetricCollection> {
+  const collectedAt = new Date().toISOString();
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const samples: OvirtCapacityMetricSample[] = [];
+  const warnings: CollectionIssue[] = [];
+  const errors: CollectionIssue[] = [];
+  let authorization: string;
+
+  try {
+    authorization = `Bearer ${await requestAccessToken(fetchImpl, target, options)}`;
+  } catch (error) {
+    return {
+      collectedAt,
+      samples,
+      warnings,
+      errors: [{ message: error instanceof Error ? error.message : "Authentication failed" }]
+    };
+  }
+
+  await collectStatisticsForResources(fetchImpl, target.managerUrl, "hosts", "host", "host", authorization, options, samples, errors);
+  await collectStatisticsForResources(fetchImpl, target.managerUrl, "vms", "vm", "vm", authorization, options, samples, errors);
+  await collectStorageDomainMetrics(fetchImpl, target.managerUrl, authorization, options, samples, errors);
+
+  return { collectedAt, samples, warnings, errors };
+}
+
 export function ovirtApiBase(managerUrl: string): string {
   const trimmed = managerUrl.replace(/\/+$/, "");
   if (trimmed.endsWith("/ovirt-engine/api")) {
@@ -225,6 +277,256 @@ async function listResourcePath(
     }
     page += 1;
   }
+}
+
+async function collectStatisticsForResources(
+  fetchImpl: typeof fetch,
+  managerUrl: string,
+  path: "hosts" | "vms",
+  itemKey: "host" | "vm",
+  resourceType: "host" | "vm",
+  authorization: string,
+  options: OvirtCollectorOptions,
+  samples: OvirtCapacityMetricSample[],
+  errors: CollectionIssue[]
+): Promise<void> {
+  let resources: InventoryResource[];
+  try {
+    resources = await listResourcePath(fetchImpl, managerUrl, path, itemKey, authorization, options, "statistics");
+  } catch (error) {
+    errors.push({ resource: path, message: error instanceof Error ? error.message : "Statistics collection failed" });
+    return;
+  }
+
+  for (const resource of resources) {
+    const id = typeof resource.id === "string" ? resource.id : undefined;
+    if (!id) {
+      continue;
+    }
+
+    let statistics = statisticsFromResource(resource);
+    if (statistics.length === 0) {
+      try {
+        statistics = await listResourcePath(
+          fetchImpl,
+          managerUrl,
+          `${path}/${encodeURIComponent(id)}/statistics`,
+          "statistic",
+          authorization,
+          options
+        );
+      } catch (error) {
+        errors.push({
+          resource: path,
+          message: `${displayName(resource)} statistics collection failed: ${error instanceof Error ? error.message : "Statistics collection failed"}`
+        });
+        continue;
+      }
+    }
+
+    samples.push(...capacitySamplesFromStatistics(resourceType, id, statistics));
+  }
+}
+
+async function collectStorageDomainMetrics(
+  fetchImpl: typeof fetch,
+  managerUrl: string,
+  authorization: string,
+  options: OvirtCollectorOptions,
+  samples: OvirtCapacityMetricSample[],
+  errors: CollectionIssue[]
+): Promise<void> {
+  let storageDomains: InventoryResource[];
+  try {
+    storageDomains = await listResourcePath(fetchImpl, managerUrl, "storagedomains", "storage_domain", authorization, options);
+  } catch (error) {
+    errors.push({ resource: "storageDomains", message: error instanceof Error ? error.message : "Storage capacity collection failed" });
+    return;
+  }
+
+  for (const storageDomain of storageDomains) {
+    const id = typeof storageDomain.id === "string" ? storageDomain.id : undefined;
+    const used = finiteNumber(storageDomain.used);
+    const total = finiteNumber(storageDomain.total) ?? sumFinite(used, finiteNumber(storageDomain.available));
+    if (!id || used === undefined || total === undefined || total <= 0) {
+      continue;
+    }
+    samples.push({
+      resourceType: "storage_domain",
+      resourceId: id,
+      metricName: "storage.used.percent",
+      value: Math.max(0, Math.min(100, (used / total) * 100)),
+      labels: { source: "ovirt.storage_domain" }
+    });
+  }
+}
+
+interface StatisticReading {
+  name: string;
+  value: number;
+  unit?: string;
+}
+
+function statisticsFromResource(resource: InventoryResource): InventoryResource[] {
+  return nestedResources(resource.statistics, "statistic");
+}
+
+function capacitySamplesFromStatistics(
+  resourceType: "host" | "vm",
+  resourceId: string,
+  statistics: InventoryResource[]
+): OvirtCapacityMetricSample[] {
+  const readings = new Map<string, StatisticReading>();
+  for (const statistic of statistics) {
+    const name = nonEmptyString(statistic.name)?.toLowerCase();
+    const value = statisticNumber(statistic.values ?? statistic.value ?? statistic.datum);
+    if (!name || value === undefined) {
+      continue;
+    }
+    readings.set(name, {
+      name,
+      value,
+      unit: nonEmptyString(statistic.unit)
+    });
+  }
+
+  const samples: OvirtCapacityMetricSample[] = [];
+  const cpu = percentage(reading(readings, ["cpu.usage.percent", "cpu.current.total", "cpu.utilization"]));
+  if (cpu !== undefined) {
+    samples.push(statisticSample(resourceType, resourceId, "cpu.usage.percent", cpu, "cpu"));
+  }
+
+  const memory =
+    percentage(reading(readings, ["memory.usage.percent", "memory.used.percent"])) ??
+    percentageFromParts(reading(readings, ["memory.used", "memory.used.bytes"]), reading(readings, ["memory.total", "memory.total.bytes"]));
+  if (memory !== undefined) {
+    samples.push(statisticSample(resourceType, resourceId, "memory.usage.percent", memory, "memory"));
+  }
+
+  if (resourceType === "vm") {
+    const receive = megabitsPerSecond(reading(readings, ["network.rx.mbps", "network.receive.mbps", "network.rx.rate"]));
+    if (receive !== undefined) {
+      samples.push(statisticSample(resourceType, resourceId, "network.rx.mbps", receive, "network"));
+    }
+    const transmit = megabitsPerSecond(reading(readings, ["network.tx.mbps", "network.transmit.mbps", "network.tx.rate"]));
+    if (transmit !== undefined) {
+      samples.push(statisticSample(resourceType, resourceId, "network.tx.mbps", transmit, "network"));
+    }
+  }
+
+  return samples;
+}
+
+function statisticSample(
+  resourceType: "host" | "vm",
+  resourceId: string,
+  metricName: Exclude<OvirtCapacityMetricName, "storage.used.percent">,
+  value: number,
+  source: string
+): OvirtCapacityMetricSample {
+  return {
+    resourceType,
+    resourceId,
+    metricName,
+    value,
+    labels: { source: "ovirt.statistics", statistic: source }
+  };
+}
+
+function reading(readings: Map<string, StatisticReading>, names: string[]): StatisticReading | undefined {
+  for (const name of names) {
+    const result = readings.get(name);
+    if (result) {
+      return result;
+    }
+  }
+  return undefined;
+}
+
+function percentage(value: StatisticReading | undefined): number | undefined {
+  if (!value || value.value < 0) {
+    return undefined;
+  }
+  const unit = value.unit?.toLowerCase() ?? "";
+  const percent = unit.includes("percent") || unit === "%" || value.name.endsWith(".percent") ? value.value : value.value <= 1 ? value.value * 100 : undefined;
+  return percent === undefined ? undefined : Math.max(0, Math.min(100, percent));
+}
+
+function percentageFromParts(used: StatisticReading | undefined, total: StatisticReading | undefined): number | undefined {
+  if (!used || !total || used.value < 0 || total.value <= 0) {
+    return undefined;
+  }
+  return Math.max(0, Math.min(100, (used.value / total.value) * 100));
+}
+
+function megabitsPerSecond(value: StatisticReading | undefined): number | undefined {
+  if (!value || value.value < 0) {
+    return undefined;
+  }
+  const unit = value.unit?.toLowerCase().replaceAll(" ", "") ?? "";
+  if (value.name.endsWith(".mbps") || unit.includes("mbps") || unit.includes("mibps")) {
+    return value.value;
+  }
+  if (unit.includes("bytes/s") || unit.includes("bytespersecond") || unit === "b/s") {
+    return (value.value * 8) / 1_000_000;
+  }
+  if (unit.includes("bits/s") || unit.includes("bitspersecond") || unit === "bit/s") {
+    return value.value / 1_000_000;
+  }
+  return undefined;
+}
+
+function nestedResources(value: unknown, itemKey: string): InventoryResource[] {
+  if (Array.isArray(value)) {
+    return value.filter(isResource);
+  }
+  if (!isResource(value)) {
+    return [];
+  }
+  const nested = value[itemKey];
+  if (Array.isArray(nested)) {
+    return nested.filter(isResource);
+  }
+  return isResource(nested) ? [nested] : [];
+}
+
+function statisticNumber(value: unknown): number | undefined {
+  const direct = finiteNumber(value);
+  if (direct !== undefined) {
+    return direct;
+  }
+  if (Array.isArray(value)) {
+    for (let index = value.length - 1; index >= 0; index -= 1) {
+      const result = statisticNumber(value[index]);
+      if (result !== undefined) {
+        return result;
+      }
+    }
+    return undefined;
+  }
+  if (!isResource(value)) {
+    return undefined;
+  }
+  return statisticNumber(value.datum) ?? statisticNumber(value.value) ?? statisticNumber(value.values);
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function sumFinite(left: number | undefined, right: number | undefined): number | undefined {
+  return left === undefined || right === undefined ? undefined : left + right;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
 }
 
 async function collectChildResources(

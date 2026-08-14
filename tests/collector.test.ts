@@ -4,7 +4,7 @@ import { newDb } from "pg-mem";
 import { buildApp } from "../server/app.js";
 import { allowInsecureTlsForManager } from "../server/collection.js";
 import { openDatabase, type SqliteDatabase } from "../server/db.js";
-import { collectOvirtSnapshot, ovirtApiBase, ovirtTokenUrl, type OvirtCollectionTarget } from "../server/ovirt.js";
+import { collectOvirtCapacityMetrics, collectOvirtSnapshot, ovirtApiBase, ovirtTokenUrl, type OvirtCollectionTarget } from "../server/ovirt.js";
 import { migratePostgres, type PostgresQueryable } from "../server/postgres/migrate.js";
 import { hashPassword } from "../server/security.js";
 import { testConfig } from "./health.test.js";
@@ -297,6 +297,67 @@ describe("oVirt backend collector", () => {
     expect(networkSnapshot.status).toBe("failed");
     expect(networkSnapshot.errors[0]?.message).toContain("Network or TLS failure");
     expect(networkSnapshot.warnings).toEqual([]);
+  });
+
+  it("collects normalized capacity samples with read-only oVirt API calls", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const parsed = new URL(String(input));
+      if (parsed.pathname.endsWith("/sso/oauth/token")) {
+        return jsonResponse({ access_token: "test-access-token" });
+      }
+      expect(init?.method).toBe("GET");
+      if (parsed.pathname.endsWith("/hosts")) {
+        return jsonResponse({
+          host: [
+            {
+              id: "host-1",
+              statistics: {
+                statistic: [
+                  { name: "cpu.current.total", unit: "percent", values: { value: [{ datum: "72" }] } },
+                  { name: "memory.used", unit: "bytes", values: { value: [{ datum: "6442450944" }] } },
+                  { name: "memory.total", unit: "bytes", values: { value: [{ datum: "8589934592" }] } }
+                ]
+              }
+            }
+          ]
+        });
+      }
+      if (parsed.pathname.endsWith("/vms")) {
+        return jsonResponse({
+          vm: [
+            {
+              id: "vm-1",
+              statistics: {
+                statistic: [
+                  { name: "cpu.current.total", unit: "percent", values: { value: [{ datum: "41" }] } },
+                  { name: "memory.usage.percent", unit: "percent", values: { value: [{ datum: "63" }] } },
+                  { name: "network.rx.rate", unit: "bytes/s", values: { value: [{ datum: "12500000" }] } },
+                  { name: "network.tx.rate", unit: "bytes/s", values: { value: [{ datum: "6250000" }] } }
+                ]
+              }
+            }
+          ]
+        });
+      }
+      if (parsed.pathname.endsWith("/storagedomains")) {
+        return jsonResponse({ storage_domain: [{ id: "storage-1", total: 1000, used: 640 }] });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    const result = await collectOvirtCapacityMetrics(target, { fetchImpl: fetchMock as unknown as typeof fetch });
+
+    expect(result.errors).toEqual([]);
+    expect(result.samples).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ resourceType: "host", resourceId: "host-1", metricName: "cpu.usage.percent", value: 72 }),
+        expect.objectContaining({ resourceType: "host", resourceId: "host-1", metricName: "memory.usage.percent", value: 75 }),
+        expect.objectContaining({ resourceType: "vm", resourceId: "vm-1", metricName: "network.rx.mbps", value: 100 }),
+        expect.objectContaining({ resourceType: "vm", resourceId: "vm-1", metricName: "network.tx.mbps", value: 50 }),
+        expect.objectContaining({ resourceType: "storage_domain", resourceId: "storage-1", metricName: "storage.used.percent", value: 64 })
+      ])
+    );
+    expect(fetchMock.mock.calls.slice(1).every(([, init]) => init?.method === "GET")).toBe(true);
   });
 });
 
