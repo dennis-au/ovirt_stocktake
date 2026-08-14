@@ -1542,29 +1542,54 @@ select:focus {
   padding-inline: 6px;
 }
 
-.cluster-vm-data-table {
-  min-width: 1080px;
+.cluster-detail-panel {
+  container-type: inline-size;
 }
 
-.cluster-vm-data-table th:nth-child(1),
-.cluster-vm-data-table th:nth-child(2),
-.cluster-vm-data-table th:nth-child(3),
-.cluster-vm-data-table th:nth-child(6),
-.cluster-vm-data-table th:nth-child(7) {
+.cluster-vm-data-table {
+  min-width: 100%;
+}
+
+.cluster-vm-name-column,
+.cluster-vm-ip-column {
+  width: 10%;
+}
+
+.cluster-vm-environment-column,
+.cluster-vm-vcpu-column {
+  width: 8%;
+}
+
+.cluster-vm-power-column {
   width: 9%;
 }
 
-.cluster-vm-data-table th:nth-child(4),
-.cluster-vm-data-table th:nth-child(5) {
-  width: 14%;
+.cluster-vm-host-column {
+  width: 15%;
 }
 
-.cluster-vm-data-table th:nth-child(8) {
+.cluster-vm-guest-column {
   width: 13%;
 }
 
-.cluster-vm-data-table th:nth-child(9) {
-  width: 14%;
+.cluster-vm-memory-column {
+  width: 12%;
+}
+
+.cluster-vm-storage-column {
+  width: 15%;
+}
+
+.cluster-vm-host-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@container (max-width: 920px) {
+  .cluster-vm-data-table {
+    min-width: 960px;
+  }
 }
 
 .extra-wide-table {
@@ -2173,7 +2198,7 @@ select:focus {
   }
 
   .cluster-vm-data-table {
-    min-width: 1080px;
+    min-width: 960px;
   }
 
   .login-form,

@@ -169,9 +169,10 @@ export function clusterDetail(db: SqliteDatabase, managerId: string, clusterId: 
     return undefined;
   }
 
+  const hostNamesById = hostNames(resources);
   return {
     ...summary,
-    vms: resources.vms.filter((vm) => refId(vm.cluster) === summary.clusterId).map(vmDetail)
+    vms: resources.vms.filter((vm) => refId(vm.cluster) === summary.clusterId).map((vm) => vmDetail(vm, hostNamesById))
   };
 }
 
@@ -219,15 +220,16 @@ function clusterSummary(
   };
 }
 
-function vmDetail(vm: InventoryResource): DashboardClusterVm {
+function vmDetail(vm: InventoryResource, hostNamesById: Map<string, string>): DashboardClusterVm {
   const vmId = stringValue(vm.id) ?? stringValue(vm.name) ?? "unknown";
   const diskTotals = vmDiskTotals(vm);
+  const hostId = refId(vm.host);
   return {
     vmId,
     name: stringValue(vm.name) ?? vmId,
     environment: vmEnvironment(vm),
     powerState: stringValue(vm.status),
-    host: refName(vm.host) ?? refId(vm.host),
+    host: refName(vm.host) ?? (hostId ? hostNamesById.get(hostId) ?? "Unknown host" : undefined),
     guestOs: guestOs(vm),
     ipAddress: firstIpAddress(vm),
     vcpuCount: cpuTotal(recordValue(recordValue(vm.cpu)?.topology)),
@@ -235,6 +237,16 @@ function vmDetail(vm: InventoryResource): DashboardClusterVm {
     storageAllocatedGiB: diskTotals.allocated,
     storageUsedGiB: diskTotals.used
   };
+}
+
+function hostNames(resources: InventoryResources): Map<string, string> {
+  return new Map(
+    resources.hosts.flatMap((host) => {
+      const id = stringValue(host.id);
+      const name = stringValue(host.name);
+      return id && name ? [[id, name]] : [];
+    })
+  );
 }
 
 function latestSnapshot(db: SqliteDatabase, managerId: string, statuses?: SnapshotStatus[]): SnapshotRow | undefined {

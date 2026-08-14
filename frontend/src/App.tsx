@@ -1509,6 +1509,17 @@ function ClusterVmTable({ vms }: { vms: DashboardClusterVm[] }) {
       </div>
       <div className="table-scroll">
         <table className="data-table adaptive-data-table cluster-vm-data-table">
+          <colgroup>
+            <col className="cluster-vm-name-column" />
+            <col className="cluster-vm-environment-column" />
+            <col className="cluster-vm-power-column" />
+            <col className="cluster-vm-host-column" />
+            <col className="cluster-vm-guest-column" />
+            <col className="cluster-vm-ip-column" />
+            <col className="cluster-vm-vcpu-column" />
+            <col className="cluster-vm-memory-column" />
+            <col className="cluster-vm-storage-column" />
+          </colgroup>
           <thead>
             <tr>
               <th scope="col">VM Name</th>
@@ -1535,7 +1546,9 @@ function ClusterVmTable({ vms }: { vms: DashboardClusterVm[] }) {
                   <td>{vm.name}</td>
                   <td>{vm.environment ?? "-"}</td>
                   <td>{vm.powerState ?? "-"}</td>
-                  <td>{vm.host ?? "-"}</td>
+                  <td className="cluster-vm-host-cell" title={vm.host}>
+                    {vm.host ?? "-"}
+                  </td>
                   <td>{vm.guestOs ?? "-"}</td>
                   <td>{vm.ipAddress ?? "-"}</td>
                   <td>{vm.vcpuCount ?? "-"}</td>

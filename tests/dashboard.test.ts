@@ -99,14 +99,14 @@ describe("dashboard", () => {
           ...emptyInventoryResources(),
           dataCenters: [{ id: "dc-a", name: "Default" }],
           clusters: [{ id: "cluster-a", name: "Cluster A", data_center: { id: "dc-a" }, version: { major: 4, minor: 8 } }],
-          hosts: [{ id: "host-a", status: "up", cluster: { id: "cluster-a" } }],
+          hosts: [{ id: "host-a", name: "node-a", status: "up", cluster: { id: "cluster-a" } }],
           vms: [
             {
               id: "vm-a1",
               name: "api-01",
               status: "up",
               cluster: { id: "cluster-a" },
-              host: { id: "host-a", name: "node-a" },
+              host: { id: "host-a" },
               cpu: { topology: { sockets: 1, cores: 2, threads: 2 } },
               memory: 8589934592,
               guest_info: { os: { name: "Linux", version: "9" } },
@@ -127,7 +127,7 @@ describe("dashboard", () => {
                 ]
               }
             },
-            { id: "vm-a2", name: "db-01", status: "down", cluster: { id: "cluster-a" } }
+            { id: "vm-a2", name: "db-01", status: "down", cluster: { id: "cluster-a" }, host: { id: "host-missing" } }
           ],
           storageDomains: [{ id: "sd-a", data_center: { id: "dc-a" } }],
           disks: [{ id: "disk-a" }],
@@ -213,7 +213,7 @@ describe("dashboard", () => {
           storageAllocatedGiB: 10,
           storageUsedGiB: 5
         },
-        expect.objectContaining({ name: "db-01", powerState: "down" })
+        expect.objectContaining({ name: "db-01", powerState: "down", host: "Unknown host" })
       ]
     });
     await app.close();
