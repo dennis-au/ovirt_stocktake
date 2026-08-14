@@ -28,7 +28,6 @@ import {
 } from "lucide-react";
 import { type ChangeEvent, type FormEvent, useEffect, useState } from "react";
 import {
-  collectAllManagers,
   collectManager,
   createSavedView,
   createManager,
@@ -72,6 +71,7 @@ import {
 import appPackage from "../../package.json";
 import { RelationshipReportBuilder } from "./RelationshipReportBuilder";
 import { CapacityPage } from "./CapacityPage";
+import { collectManagersSequentially } from "./manager-collection";
 
 type PageId = "dashboard" | "inventory" | "capacity" | "relationships" | "managers" | "history" | "settings" | "cluster";
 type SnapshotFilters = { managerId: string; status: string };
@@ -587,22 +587,37 @@ export function App() {
   async function handleCollectAll() {
     setManagerError("");
     const enabledManagerCount = managers.filter((manager) => manager.enabled).length;
+    if (enabledManagerCount === 0) {
+      setManagerMessage("No enabled managers to collect");
+      return;
+    }
+
     setManagerMessage(`Collecting ${enabledManagerCount} enabled manager(s)`);
     setCollectedSnapshot(undefined);
     setCollectionBusyId("all");
 
     try {
-      const savedSnapshots = await collectAllManagers();
+      const { snapshots: savedSnapshots, failures } = await collectManagersSequentially(
+        managers,
+        (manager) => collectManager(manager.id),
+        (manager, index, total) => setManagerMessage(`Collecting ${manager.name} (${index + 1} of ${total})`)
+      );
       const savedIds = new Set(savedSnapshots.map((snapshot) => snapshot.id));
       setSnapshots((current) => [...savedSnapshots, ...current.filter((item) => !savedIds.has(item.id))]);
       if (savedSnapshots[0]) {
-        const selected = await getSnapshot(savedSnapshots[0].id);
-        setSelectedSnapshot(selected);
-        setCollectedSnapshot(selected);
+        setSelectedSnapshot(savedSnapshots[0]);
+        setCollectedSnapshot(savedSnapshots[0]);
       }
       setDashboard(await getDashboard());
       await loadInventory(inventoryFilters);
-      setManagerMessage(savedSnapshots.length > 0 ? `Collected ${savedSnapshots.length} enabled manager(s)` : "No enabled managers collected");
+      if (failures.length > 0) {
+        setManagerError(`Collection failed for ${failures.map((failure) => failure.managerName).join(", ")}`);
+      }
+      setManagerMessage(
+        failures.length > 0
+          ? `Collected ${savedSnapshots.length} manager(s); ${failures.length} failed`
+          : `Collected ${savedSnapshots.length} enabled manager(s)`
+      );
     } catch (error) {
       setManagerError(error instanceof Error ? error.message : "Collection failed");
     } finally {
