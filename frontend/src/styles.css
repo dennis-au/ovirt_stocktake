@@ -241,6 +241,18 @@ button:disabled {
   text-decoration: none;
 }
 
+.nav-testing-badge {
+  margin-left: auto;
+  border: 1px solid rgba(229, 231, 235, 0.28);
+  border-radius: 999px;
+  padding: 2px 6px;
+  color: rgba(229, 231, 235, 0.86);
+  font-size: 0.66rem;
+  font-weight: 750;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
 .sidebar-nav a:hover,
 .sidebar-nav a:focus-visible,
 .sidebar-nav a[aria-current="page"] {
@@ -1487,8 +1499,10 @@ select:focus {
 }
 
 .table-scroll {
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
-  scrollbar-gutter: stable;
+  overflow-y: hidden;
 }
 
 .data-table {
@@ -1501,6 +1515,24 @@ select:focus {
 
 .wide-table {
   min-width: 1180px;
+}
+
+.adaptive-data-table {
+  min-width: 100%;
+  table-layout: fixed;
+}
+
+.adaptive-data-table th,
+.adaptive-data-table td {
+  padding: 10px 8px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.adaptive-data-table .state-pill {
+  min-width: 0;
+  max-width: 100%;
+  padding-inline: 6px;
 }
 
 .extra-wide-table {
@@ -2101,6 +2133,10 @@ select:focus {
   }
 
   .inventory-data-table {
+    min-width: 900px;
+  }
+
+  .adaptive-data-table {
     min-width: 900px;
   }
 

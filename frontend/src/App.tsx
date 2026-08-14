@@ -670,6 +670,7 @@ export function App() {
             <a href="#capacity" aria-current={activePage === "capacity" ? "page" : undefined}>
               <ChartLine aria-hidden="true" size={17} />
               Capacity
+              <span className="nav-testing-badge">Testing</span>
             </a>
             <a href="#relationships" aria-current={activePage === "relationships" ? "page" : undefined}>
               <Waypoints aria-hidden="true" size={17} />
@@ -1348,7 +1349,7 @@ function ClusterTable({
         <p className="empty-state">No clusters collected yet</p>
       ) : (
         <div className="table-scroll">
-          <table className="data-table">
+          <table className="data-table adaptive-data-table">
             <thead>
               <tr>
                 <th scope="col">Cluster</th>
@@ -1490,7 +1491,7 @@ function ClusterVmTable({ vms }: { vms: DashboardClusterVm[] }) {
         <h3 id="cluster-vm-table-title">VMs</h3>
       </div>
       <div className="table-scroll">
-        <table className="data-table wide-table">
+        <table className="data-table adaptive-data-table">
           <thead>
             <tr>
               <th scope="col">VM Name</th>
