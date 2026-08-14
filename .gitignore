@@ -8,6 +8,9 @@ coverage/
 playwright-report/
 test-results/
 .data/
+inventory_data/
+postgres_data/
+ovirt-inventory-compose-v*.tar.gz
 .env
 .env.*
 !.env.example

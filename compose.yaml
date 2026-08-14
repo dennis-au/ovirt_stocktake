@@ -2,7 +2,7 @@ name: ovirt-inventory
 
 services:
   app:
-    image: ${OVIRT_INVENTORY_IMAGE:-ghcr.io/dennis-au/ovirt_stocktake:v0.1.12}
+    image: ${OVIRT_INVENTORY_IMAGE:-ghcr.io/dennis-au/ovirt_stocktake:v0.1.13}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -28,7 +28,7 @@ services:
     ports:
       - "${OVIRT_INVENTORY_HOST_PORT:-3001}:3000"
     volumes:
-      - inventory_data:/data
+      - ./inventory_data:/data
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
@@ -44,13 +44,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-ovirt_inventory}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 12
-
-volumes:
-  inventory_data:
-  postgres_data:

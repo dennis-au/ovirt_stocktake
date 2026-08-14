@@ -18,25 +18,18 @@ Supported platforms:
 Release image:
 
 ```bash
-docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.12
+docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.13
 ```
 
 ## Quick Start With Docker Compose
 
-Docker Compose is the supported deployment. It starts `ovirt-inventory` with PostgreSQL, persistent storage for both application state and normalized inventory, and Capacity metrics collection enabled.
+Docker Compose is the supported deployment. It starts `ovirt-inventory` with PostgreSQL, persistent storage for both application state and normalized inventory, and Capacity metrics collection enabled. The data stays in `./inventory_data` and `./postgres_data` beside `compose.yaml`, so it is straightforward to back up and restore.
 
 ```bash
-cp .env.example .env
+./setup.sh
 ```
 
-Generate URL-safe secrets with OpenSSL, then replace the matching values in `.env`:
-
-```bash
-openssl rand -base64 32  # OVIRT_INVENTORY_SESSION_SECRET
-openssl rand -base64 32  # OVIRT_INVENTORY_ENCRYPTION_KEY
-openssl rand -base64 24  # OVIRT_INVENTORY_ADMIN_PASSWORD
-openssl rand -hex 32    # POSTGRES_PASSWORD
-```
+`setup.sh` creates `.env`, generates the PostgreSQL password, session secret, credential-encryption key, and an admin password with OpenSSL, and prints the configured admin password once. It will not overwrite an existing `.env`. Review or edit `.env` before starting the stack.
 
 Start the stack:
 
@@ -47,20 +40,20 @@ docker compose up -d
 
 Open the app at `http://localhost:3001`. Compose does not publish PostgreSQL to the host. Keep `OVIRT_INVENTORY_SECURE_COOKIES=false` for direct HTTP access; set it to `true` behind an HTTPS reverse proxy.
 
-The `inventory_data` volume stores SQLite-backed application state such as login sessions, encrypted Manager credentials, snapshots, and saved views. The `postgres_data` volume stores normalized inventory and the separate Capacity metric samples. Stop the stack with `docker compose down`; add `-v` only when intentionally deleting both persistent stores.
+`./inventory_data` stores SQLite-backed application state such as login sessions, encrypted Manager credentials, snapshots, and saved views. `./postgres_data` stores normalized inventory and the separate Capacity metric samples. Stop the stack with `docker compose down`; it leaves both data folders intact. Delete either folder only when intentionally removing its persistent data.
 
 To use a different published image, set `OVIRT_INVENTORY_IMAGE` in `.env`. For example, use `ghcr.io/dennis-au/ovirt_stocktake:latest` after reviewing the release you intend to run.
 
 ## Downloadable Compose Bundle
 
-Each GitHub release includes an `ovirt-inventory-compose-v0.1.12.tar.gz` deployment bundle containing `compose.yaml`, `.env.example`, and this README. Download, extract, create the editable `.env`, then start the app:
+Each GitHub release includes an `ovirt-inventory-compose-v0.1.13.tar.gz` deployment bundle containing `compose.yaml`, empty `inventory_data/` and `postgres_data/` folders, `.env.example`, `setup.sh`, and this README. Download, extract, generate the editable `.env`, then start the app:
 
 ```bash
-curl -LO https://github.com/dennis-au/ovirt_stocktake/releases/download/v0.1.12/ovirt-inventory-compose-v0.1.12.tar.gz
-tar -xzf ovirt-inventory-compose-v0.1.12.tar.gz
-cd ovirt-inventory-compose-v0.1.12
-cp .env.example .env
-# Edit .env with the OpenSSL-generated values above.
+curl -LO https://github.com/dennis-au/ovirt_stocktake/releases/download/v0.1.13/ovirt-inventory-compose-v0.1.13.tar.gz
+tar -xzf ovirt-inventory-compose-v0.1.13.tar.gz
+cd ovirt-inventory-compose-v0.1.13
+./setup.sh
+# Optionally edit .env, for example to change the host port.
 docker compose pull
 docker compose up -d
 ```
@@ -119,6 +112,7 @@ npm run typecheck
 npm test
 npm run build
 npm run compose:config
+npm run compose:bundle
 ```
 
 Build a multi-arch container image:
