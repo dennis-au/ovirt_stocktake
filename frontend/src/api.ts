@@ -384,9 +384,9 @@ export async function collectManager(id: string): Promise<SnapshotDetail> {
   return snapshotFromResponse(response);
 }
 
-export async function collectAllManagers(): Promise<SnapshotDetail[]> {
+export async function collectAllManagers(): Promise<SnapshotSummary[]> {
   const response = await fetch("/api/collect", { method: "POST" });
-  const body = (await response.json().catch(() => undefined)) as { snapshots?: SnapshotDetail[]; error?: string } | undefined;
+  const body = (await response.json().catch(() => undefined)) as { snapshots?: SnapshotSummary[]; error?: string } | undefined;
   if (!response.ok || !body?.snapshots) {
     throw new Error(body?.error ?? `Collection request failed with HTTP ${response.status}`);
   }

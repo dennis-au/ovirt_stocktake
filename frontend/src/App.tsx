@@ -585,7 +585,8 @@ export function App() {
 
   async function handleCollectAll() {
     setManagerError("");
-    setManagerMessage("");
+    const enabledManagerCount = managers.filter((manager) => manager.enabled).length;
+    setManagerMessage(`Collecting ${enabledManagerCount} enabled manager(s)`);
     setCollectedSnapshot(undefined);
     setCollectionBusyId("all");
 
@@ -593,8 +594,11 @@ export function App() {
       const savedSnapshots = await collectAllManagers();
       const savedIds = new Set(savedSnapshots.map((snapshot) => snapshot.id));
       setSnapshots((current) => [...savedSnapshots, ...current.filter((item) => !savedIds.has(item.id))]);
-      setSelectedSnapshot(savedSnapshots[0]);
-      setCollectedSnapshot(savedSnapshots[0]);
+      if (savedSnapshots[0]) {
+        const selected = await getSnapshot(savedSnapshots[0].id);
+        setSelectedSnapshot(selected);
+        setCollectedSnapshot(selected);
+      }
       setDashboard(await getDashboard());
       await loadInventory(inventoryFilters);
       setManagerMessage(savedSnapshots.length > 0 ? `Collected ${savedSnapshots.length} enabled manager(s)` : "No enabled managers collected");

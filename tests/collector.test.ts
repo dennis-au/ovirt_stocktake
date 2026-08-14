@@ -501,17 +501,19 @@ describe("manual backend collection API", () => {
     await app.close();
   });
 
-  it("collects all enabled managers only", async () => {
+  it("collects all enabled managers as compact snapshot summaries", async () => {
     const { app, cookie } = await authenticatedApp();
-    await createManager(app, cookie, { name: "enabled" });
+    await createManager(app, cookie, { name: "enabled-a" });
+    await createManager(app, cookie, { name: "enabled-b" });
     await createManager(app, cookie, { name: "disabled", enabled: false });
     vi.stubGlobal("fetch", ovirtFetchMock());
 
     const response = await app.inject({ method: "POST", url: "/api/collect", cookies: cookie });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().snapshots).toHaveLength(1);
-    expect(response.json().snapshots[0].managerName).toBe("enabled");
+    expect(response.json().snapshots).toHaveLength(2);
+    expect(response.json().snapshots.map((snapshot: { managerName: string }) => snapshot.managerName)).toEqual(["enabled-a", "enabled-b"]);
+    expect(response.json().snapshots.every((snapshot: Record<string, unknown>) => !("resources" in snapshot))).toBe(true);
     await app.close();
   });
 

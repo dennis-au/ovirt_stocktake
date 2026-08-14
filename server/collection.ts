@@ -8,7 +8,7 @@ import { normalizeManagerUrl } from "./managers.js";
 import { snapshotToInventorySyncInput } from "./ovirt-normalize.js";
 import { collectOvirtSnapshot, type OvirtCollectionTarget } from "./ovirt.js";
 import { replaceCurrentInventory, type ConnectablePostgres } from "./postgres/inventory.js";
-import { saveSnapshotPayload, type SnapshotDetail } from "./snapshots.js";
+import { saveSnapshotPayload, type SnapshotDetail, type SnapshotSummary } from "./snapshots.js";
 import { requireRole, roles } from "./rbac.js";
 import { applySnapshotRetention } from "./settings.js";
 import {
@@ -29,6 +29,8 @@ interface ManagerCredentialRecord {
   username_ciphertext: string;
   password_ciphertext: string;
 }
+
+const BULK_COLLECTION_CONCURRENCY = 2;
 
 export interface CollectionTestResult {
   managerName: string;
@@ -106,24 +108,28 @@ export function registerCollectionRoutes(
       return;
     }
 
-    const snapshots: SnapshotDetail[] = [];
-    for (const manager of listEnabledManagers(db)) {
-      const snapshot = await collectAndSaveManagerSnapshot(db, manager, encryptionKey, config.ovirtAllowInsecureTls, config, inventoryDb);
-      snapshots.push(snapshot);
-      recordAudit(db, {
-        actor: currentSession(db, request)?.username,
-        action: "collection.completed",
-        resourceType: "manager",
-        resourceId: manager.id,
-        metadata: { snapshotId: snapshot.id, status: snapshot.status, warnings: snapshot.warningsCount, errors: snapshot.errorsCount }
-      });
-    }
+    const actor = currentSession(db, request)?.username;
+    const snapshots = await collectManagersConcurrently(
+      listEnabledManagers(db),
+      BULK_COLLECTION_CONCURRENCY,
+      async (manager) => {
+        const snapshot = await collectAndSaveManagerSnapshot(db, manager, encryptionKey, config.ovirtAllowInsecureTls, config, inventoryDb);
+        recordAudit(db, {
+          actor,
+          action: "collection.completed",
+          resourceType: "manager",
+          resourceId: manager.id,
+          metadata: { snapshotId: snapshot.id, status: snapshot.status, warnings: snapshot.warningsCount, errors: snapshot.errorsCount }
+        });
+        return snapshot;
+      }
+    );
     recordAudit(db, {
       actor: currentSession(db, request)?.username,
       action: "collection.bulk_completed",
       metadata: { managers: snapshots.length }
     });
-    return { snapshots };
+    return { snapshots: snapshots.map(snapshotSummary) };
   });
 }
 
@@ -140,6 +146,25 @@ export async function collectEnabledManagers(
   for (const manager of listEnabledManagers(db)) {
     snapshots.push(await collectAndSaveManagerSnapshot(db, manager, config.credentialEncryptionKey, config.ovirtAllowInsecureTls, config, inventoryDb));
   }
+  return snapshots;
+}
+
+async function collectManagersConcurrently(
+  managers: ManagerCredentialRecord[],
+  concurrency: number,
+  collect: (manager: ManagerCredentialRecord) => Promise<SnapshotDetail>
+): Promise<SnapshotDetail[]> {
+  const snapshots = new Array<SnapshotDetail>(managers.length);
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (nextIndex < managers.length) {
+      const index = nextIndex++;
+      snapshots[index] = await collect(managers[index]!);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, managers.length) }, worker));
   return snapshots;
 }
 
@@ -229,6 +254,23 @@ function collectionTestResult(payload: SnapshotPayload): CollectionTestResult {
     errorsCount: payload.errors.length,
     warnings: payload.warnings,
     errors: payload.errors
+  };
+}
+
+function snapshotSummary(snapshot: SnapshotDetail): SnapshotSummary {
+  return {
+    id: snapshot.id,
+    managerId: snapshot.managerId,
+    managerName: snapshot.managerName,
+    managerUrl: snapshot.managerUrl,
+    collectedAt: snapshot.collectedAt,
+    apiVersion: snapshot.apiVersion,
+    durationMs: snapshot.durationMs,
+    status: snapshot.status,
+    resourceCounts: snapshot.resourceCounts,
+    warningsCount: snapshot.warningsCount,
+    errorsCount: snapshot.errorsCount,
+    createdAt: snapshot.createdAt
   };
 }
 
