@@ -1493,7 +1493,7 @@ function ClusterVmTable({ vms }: { vms: DashboardClusterVm[] }) {
         <h3 id="cluster-vm-table-title">VMs</h3>
       </div>
       <div className="table-scroll">
-        <table className="data-table adaptive-data-table">
+        <table className="data-table adaptive-data-table cluster-vm-data-table">
           <thead>
             <tr>
               <th scope="col">VM Name</th>

@@ -1542,6 +1542,31 @@ select:focus {
   padding-inline: 6px;
 }
 
+.cluster-vm-data-table {
+  min-width: 1080px;
+}
+
+.cluster-vm-data-table th:nth-child(1),
+.cluster-vm-data-table th:nth-child(2),
+.cluster-vm-data-table th:nth-child(3),
+.cluster-vm-data-table th:nth-child(6),
+.cluster-vm-data-table th:nth-child(7) {
+  width: 9%;
+}
+
+.cluster-vm-data-table th:nth-child(4),
+.cluster-vm-data-table th:nth-child(5) {
+  width: 14%;
+}
+
+.cluster-vm-data-table th:nth-child(8) {
+  width: 13%;
+}
+
+.cluster-vm-data-table th:nth-child(9) {
+  width: 14%;
+}
+
 .extra-wide-table {
   min-width: 1480px;
 }
@@ -2145,6 +2170,10 @@ select:focus {
 
   .adaptive-data-table {
     min-width: 900px;
+  }
+
+  .cluster-vm-data-table {
+    min-width: 1080px;
   }
 
   .login-form,
