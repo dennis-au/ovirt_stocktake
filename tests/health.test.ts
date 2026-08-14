@@ -73,6 +73,14 @@ describe("configuration", () => {
   });
 
   it("parses PostgreSQL and scheduled collector settings", () => {
+    expect(loadConfig({ OVIRT_INVENTORY_DB_PATH: ":memory:" }).collector.enabled).toBe(true);
+    expect(
+      loadConfig({
+        OVIRT_INVENTORY_DB_PATH: ":memory:",
+        OVIRT_INVENTORY_COLLECTOR_ENABLED: "false"
+      }).collector.enabled
+    ).toBe(false);
+
     const config = loadConfig({
       OVIRT_INVENTORY_DB_PATH: ":memory:",
       OVIRT_INVENTORY_DATABASE_URL: "postgres://inventory@example.local/ovirt",

@@ -71,7 +71,7 @@ docker compose up -d
 | `OVIRT_INVENTORY_DATABASE_SSL` | Require SSL for the PostgreSQL connection. Defaults to `false`. |
 | `OVIRT_INVENTORY_METRICS_BACKEND` | Set to `postgres`, `timescale`, or `timescaledb` to enable Capacity metrics collection. Compose sets this to `postgres`. |
 | `OVIRT_INVENTORY_METRICS_SYNC_MINUTES` | Capacity metrics collection cadence. Defaults to `5`. |
-| `OVIRT_INVENTORY_COLLECTOR_ENABLED` | Enables scheduled inventory and Capacity metrics collection. Compose sets this to `true`. |
+| `OVIRT_INVENTORY_COLLECTOR_ENABLED` | Enables scheduled inventory and Capacity metrics collection. Defaults to `true`; set to `false` to disable schedules. |
 | `OVIRT_INVENTORY_ENCRYPTION_KEY` | Required for encrypting saved oVirt Manager credentials. |
 | `OVIRT_INVENTORY_SESSION_SECRET` | Required session signing secret for app login. |
 | `OVIRT_INVENTORY_SECURE_COOKIES` | Set `false` for direct HTTP access, or `true` behind HTTPS. Defaults to `true` in production when unset. |
@@ -91,7 +91,7 @@ Capacity uses collected oVirt VM and host statistics plus storage-domain utiliza
 
 Admins can open **Settings** in the app to configure miscellaneous snapshot policy:
 
-- Snapshot interval in minutes. This controls the scheduled backend collection interval when `OVIRT_INVENTORY_COLLECTOR_ENABLED=true`; the environment value remains the default until it is changed in the app.
+- Snapshot interval in minutes. This controls the scheduled backend collection interval. Set `OVIRT_INVENTORY_COLLECTOR_ENABLED=false` only when schedules must be disabled; the environment interval remains the default until it is changed in the app.
 - Snapshot data retention in days. Set `0` to keep snapshot history indefinitely. When set above `0`, snapshots older than the retention window are pruned after settings are saved and after future collection runs.
 
 ## Features

@@ -123,7 +123,8 @@ describe("dashboard", () => {
               },
               disk_attachments: {
                 disk_attachment: [
-                  { disk: { id: "disk-a1", provisioned_size: 10737418240, actual_size: 5368709120 } }
+                  { disk: { id: "disk-a1", alias: "root", provisioned_size: 10737418240, actual_size: 5368709120 } },
+                  { disk: { id: "disk-a2", alias: "database", provisioned_size: 53687091200, actual_size: 21474836480 } }
                 ]
               }
             },
@@ -210,10 +211,14 @@ describe("dashboard", () => {
           ipAddress: "10.0.0.10",
           vcpuCount: 4,
           allocatedRamMiB: 8192,
-          storageAllocatedGiB: 10,
-          storageUsedGiB: 5
+          storageAllocatedGiB: 60,
+          storageUsedGiB: 25,
+          disks: [
+            { name: "root", sizeGiB: 10 },
+            { name: "database", sizeGiB: 50 }
+          ]
         },
-        expect.objectContaining({ name: "db-01", powerState: "down", host: "Unknown host" })
+        expect.objectContaining({ name: "db-01", powerState: "down", host: "Unknown host", disks: [] })
       ]
     });
     await app.close();

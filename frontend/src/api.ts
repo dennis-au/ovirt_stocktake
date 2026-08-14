@@ -139,6 +139,12 @@ export interface DashboardClusterVm {
   allocatedRamMiB?: number;
   storageAllocatedGiB?: number;
   storageUsedGiB?: number;
+  disks: DashboardClusterVmDisk[];
+}
+
+export interface DashboardClusterVmDisk {
+  name: string;
+  sizeGiB?: number;
 }
 
 export interface SnapshotVmInventoryRow {

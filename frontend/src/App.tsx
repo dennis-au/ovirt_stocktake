@@ -113,7 +113,7 @@ const inventoryColumns: InventoryColumn[] = [
     className: "numeric-cell",
     render: (vm) => formatMemory(vm.allocatedRamMiB)
   },
-  { key: "storage", label: "Storage Allocated / Used", sortable: "storageAllocatedGiB", className: "numeric-cell", render: formatVmStorage },
+  { key: "storage", label: "Provisioned / Used Storage", sortable: "storageAllocatedGiB", className: "numeric-cell", render: formatVmStorage },
   { key: "snapshots", label: "Snapshots", className: "wrap-cell", render: formatSnapshotNames },
   { key: "collectedAt", label: "Collected", sortable: "collectedAt", className: "date-cell", render: (vm) => new Date(vm.collectedAt).toLocaleString() }
 ];
@@ -1518,7 +1518,7 @@ function ClusterVmTable({ vms }: { vms: DashboardClusterVm[] }) {
             <col className="cluster-vm-ip-column" />
             <col className="cluster-vm-vcpu-column" />
             <col className="cluster-vm-memory-column" />
-            <col className="cluster-vm-storage-column" />
+            <col className="cluster-vm-disks-column" />
           </colgroup>
           <thead>
             <tr>
@@ -1530,7 +1530,7 @@ function ClusterVmTable({ vms }: { vms: DashboardClusterVm[] }) {
               <th scope="col">IP Address</th>
               <th scope="col">vCPU Count</th>
               <th scope="col">Allocated RAM</th>
-              <th scope="col">Storage Allocated / Used</th>
+              <th scope="col">Virtual Disks</th>
             </tr>
           </thead>
           <tbody>
@@ -1553,7 +1553,20 @@ function ClusterVmTable({ vms }: { vms: DashboardClusterVm[] }) {
                   <td>{vm.ipAddress ?? "-"}</td>
                   <td>{vm.vcpuCount ?? "-"}</td>
                   <td>{formatMemory(vm.allocatedRamMiB)}</td>
-                  <td>{formatStorage(vm)}</td>
+                  <td className="cluster-vm-disks-cell">
+                    {vm.disks.length ? (
+                      <ul className="cluster-vm-disk-list" aria-label={`Virtual disks for ${vm.name}`}>
+                        {vm.disks.map((disk, index) => (
+                          <li key={`${disk.name}-${index}`}>
+                            <span className="cluster-vm-disk-name">{disk.name}</span>
+                            <span className="cluster-vm-disk-size">{formatGib(disk.sizeGiB)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      "-"
+                    )}
+                  </td>
                 </tr>
               ))
             )}
@@ -1730,12 +1743,6 @@ function formatMemory(value: number | undefined) {
   }
   const gib = value / 1024;
   return `${value.toLocaleString()} MiB (~${formatRoundedGib(gib)} GiB)`;
-}
-
-function formatStorage(vm: DashboardClusterVm) {
-  const allocated = formatGib(vm.storageAllocatedGiB);
-  const used = formatGib(vm.storageUsedGiB);
-  return allocated === "-" && used === "-" ? "-" : `${allocated} / ${used}`;
 }
 
 function formatVmStorage(vm: SnapshotVmInventoryRow) {

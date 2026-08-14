@@ -87,6 +87,12 @@ export interface DashboardClusterVm {
   allocatedRamMiB?: number;
   storageAllocatedGiB?: number;
   storageUsedGiB?: number;
+  disks: DashboardClusterVmDisk[];
+}
+
+export interface DashboardClusterVmDisk {
+  name: string;
+  sizeGiB?: number;
 }
 
 export function registerDashboardRoutes(app: FastifyInstance, db: SqliteDatabase): void {
@@ -235,7 +241,8 @@ function vmDetail(vm: InventoryResource, hostNamesById: Map<string, string>): Da
     vcpuCount: cpuTotal(recordValue(recordValue(vm.cpu)?.topology)),
     allocatedRamMiB: bytesToMiB(vm.memory),
     storageAllocatedGiB: diskTotals.allocated,
-    storageUsedGiB: diskTotals.used
+    storageUsedGiB: diskTotals.used,
+    disks: vmDisks(vm)
   };
 }
 
@@ -355,6 +362,16 @@ function vmDiskTotals(vm: InventoryResource): { allocated?: number; used?: numbe
     allocated: hasAllocated ? roundGib(allocated) : undefined,
     used: hasUsed ? roundGib(used) : undefined
   };
+}
+
+function vmDisks(vm: InventoryResource): DashboardClusterVmDisk[] {
+  return childItems(vm.disk_attachments, "disk_attachment").map((attachment) => {
+    const disk = recordValue(attachment.disk) ?? attachment;
+    return {
+      name: stringValue(disk.alias) ?? stringValue(disk.name) ?? stringValue(disk.id) ?? "Unknown disk",
+      sizeGiB: bytesToGiB(disk.provisioned_size)
+    };
+  });
 }
 
 function childItems(value: unknown, itemKey: string): InventoryResource[] {

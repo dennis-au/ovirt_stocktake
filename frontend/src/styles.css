@@ -1576,13 +1576,43 @@ select:focus {
   width: 12%;
 }
 
-.cluster-vm-storage-column {
+.cluster-vm-disks-column {
   width: 15%;
 }
 
 .cluster-vm-host-cell {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cluster-vm-disks-cell {
+  vertical-align: top;
+}
+
+.cluster-vm-disk-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cluster-vm-disk-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.cluster-vm-disk-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.cluster-vm-disk-size {
+  color: var(--muted);
   white-space: nowrap;
 }
 

@@ -77,7 +77,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     throw new Error("OVIRT_INVENTORY_SECURE_COOKIES must be true or false");
   }
 
-  const collectorEnabled = parseBoolean(environment.OVIRT_INVENTORY_COLLECTOR_ENABLED ?? "false");
+  const collectorEnabled = parseBoolean(environment.OVIRT_INVENTORY_COLLECTOR_ENABLED ?? "true");
   if (collectorEnabled === undefined) {
     throw new Error("OVIRT_INVENTORY_COLLECTOR_ENABLED must be true or false");
   }
