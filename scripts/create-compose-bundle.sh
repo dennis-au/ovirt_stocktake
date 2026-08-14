@@ -24,5 +24,6 @@ mkdir -p "$BUNDLE_DIR/inventory_data" "$BUNDLE_DIR/postgres_data"
 cp "$ROOT_DIR/compose.yaml" "$ROOT_DIR/.env.example" "$ROOT_DIR/README.md" "$ROOT_DIR/setup.sh" "$BUNDLE_DIR/"
 chmod 755 "$BUNDLE_DIR/setup.sh"
 
-COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 tar -C "$STAGING_DIR" -czf "$OUTPUT_PATH" "$BUNDLE_NAME"
+# Use the portable USTAR format so macOS extended attributes cannot become PAX headers in Linux bundles.
+COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 tar --format ustar --no-mac-metadata -C "$STAGING_DIR" -czf "$OUTPUT_PATH" "$BUNDLE_NAME"
 printf '%s\n' "Created $OUTPUT_PATH"
