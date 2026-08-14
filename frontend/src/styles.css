@@ -1040,6 +1040,25 @@ button:disabled {
   gap: 12px;
 }
 
+.settings-fields .checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid rgba(17, 24, 39, 0.12);
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: var(--well-shadow);
+}
+
+.settings-fields .checkbox-label input {
+  flex: 0 0 auto;
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+}
+
 .manager-option-row,
 .form-actions,
 .inventory-summary-row,

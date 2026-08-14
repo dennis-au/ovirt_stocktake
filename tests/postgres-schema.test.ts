@@ -38,6 +38,7 @@ describe("PostgreSQL inventory schema", () => {
         "managers",
         "resource_change_events",
         "saved_views",
+        "scheduler_schedule_state",
         "storage_domains",
         "tags",
         "vms",
@@ -72,6 +73,7 @@ describe("PostgreSQL inventory schema", () => {
     expect(migrationSql).toContain("idx_collection_runs_manager_started");
     expect(migrationSql).toContain("idx_inventory_history_resource");
     expect(migrationSql).toContain("idx_events_manager_time");
+    expect(migrationSql).toContain("idx_scheduler_schedule_next_run");
   });
 
   it("replaces current VM inventory idempotently while preserving history", async () => {

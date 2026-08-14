@@ -11,16 +11,16 @@ import { registerCollectionRoutes } from "./collection.js";
 import type { AppConfig } from "./config.js";
 import { registerDashboardRoutes } from "./dashboard.js";
 import { databaseHealth, type SqliteDatabase } from "./db.js";
+import { createDurableScheduler, schedulerAvailable, type DurableScheduler } from "./durable-scheduler.js";
 import { registerExceptionRoutes } from "./exceptions.js";
 import { registerExcelRoutes } from "./excel.js";
 import { registerInventoryRoutes } from "./inventory.js";
 import { registerManagerRoutes } from "./managers.js";
 import { registerMetricRoutes } from "./metrics.js";
-import { startMetricsScheduler } from "./metrics-scheduler.js";
 import type { ConnectablePostgres } from "./postgres/inventory.js";
+import { listScheduleStates } from "./scheduler-state.js";
 import { requireRole, roles } from "./rbac.js";
 import { registerSavedViewRoutes } from "./saved-views.js";
-import { startCollectionScheduler } from "./scheduler.js";
 import { registerSettingsRoutes } from "./settings.js";
 import { registerSnapshotInventoryRoutes } from "./snapshot-inventory.js";
 import { registerSnapshotRoutes } from "./snapshots.js";
@@ -34,11 +34,17 @@ export interface BuildAppOptions {
 export function buildApp({ db, config, inventoryDb }: BuildAppOptions): FastifyInstance {
   const app = Fastify({ logger: false });
   app.decorate("sqlite", db);
+  let scheduler: DurableScheduler | undefined;
 
   app.get("/api/health", async () => ({
     ok: true,
     service: "ovirt-inventory",
-    database: databaseHealth(db)
+    database: databaseHealth(db),
+    scheduler: scheduler?.status ?? {
+      backend: "pg-boss" as const,
+      available: schedulerAvailable(config, inventoryDb),
+      running: false
+    }
   }));
 
   registerAuthRoutes(app, db, config.auth);
@@ -55,15 +61,35 @@ export function buildApp({ db, config, inventoryDb }: BuildAppOptions): FastifyI
   registerExceptionRoutes(app, inventoryDb);
   registerSavedViewRoutes(app, db);
   app.get("/api/audit-logs", { preHandler: requireRole(roles.admin) }, async () => ({ auditLogs: listAuditLogs(db) }));
-  let scheduler = startCollectionScheduler(app, db, config, inventoryDb, { registerCloseHook: false });
-  const metricsScheduler = startMetricsScheduler(app, db, config, inventoryDb, { registerCloseHook: false });
-  registerSettingsRoutes(app, db, config, () => {
-    scheduler?.stop();
-    scheduler = startCollectionScheduler(app, db, config, inventoryDb, { registerCloseHook: false });
+  app.get("/api/scheduler", { preHandler: requireRole(roles.admin) }, async (_request, reply) => {
+    if (!inventoryDb) {
+      return reply.code(503).send({ error: "PostgreSQL scheduling is not configured" });
+    }
+    return {
+      scheduler: scheduler?.status ?? {
+        backend: "pg-boss" as const,
+        available: schedulerAvailable(config, inventoryDb),
+        running: false
+      },
+      schedules: await listScheduleStates(inventoryDb)
+    };
+  });
+  registerSettingsRoutes(app, db, config, async (settings) => {
+    await scheduler?.syncSettings(settings);
+  });
+  app.addHook("onReady", async () => {
+    if (!schedulerAvailable(config, inventoryDb) || !inventoryDb) {
+      return;
+    }
+    scheduler = createDurableScheduler({ db, config, inventoryDb });
+    try {
+      await scheduler.start();
+    } catch (error) {
+      app.log.error(error, "durable scheduler could not start");
+    }
   });
   app.addHook("onClose", async () => {
-    scheduler?.stop();
-    metricsScheduler?.stop();
+    await scheduler?.stop();
   });
 
   const currentDir = dirname(fileURLToPath(import.meta.url));

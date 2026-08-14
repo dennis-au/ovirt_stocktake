@@ -106,3 +106,114 @@ This plan supersedes the snapshot-only implementation plan. Existing working beh
 **Done when:** The revamped app can collect lab inventory, display dashboard/list/detail/history views, export data successfully, pass all automated checks, and produce secret-free acceptance notes.
 
 Acceptance note: lab collection succeeded with redacted evidence. The lab currently returned zero VMs, so live VM-detail drilling is covered by automated seeded-data tests and will be rechecked against lab data when VMs are present.
+
+## Milestone 11: Durable PostgreSQL Job Scheduler [ ]
+
+Replace the process-local `setInterval` inventory and metrics schedulers with a durable PostgreSQL-backed job system. The selected module is [pg-boss](https://pgboss.io/), using the PostgreSQL service already required by the Compose deployment. The target version must be verified at implementation time; the reviewed baseline is pg-boss 12.x, which requires Node.js 22.12+ and PostgreSQL 13+.
+
+### Architecture Decision
+
+- Use pg-boss instead of `node-cron`, Bree, Agenda, or BullMQ.
+- pg-boss fits the existing Node.js and PostgreSQL stack, supports durable jobs, database-coordinated workers, retries with exponential backoff, dead-letter handling, cron schedules, and multi-instance execution without adding Redis or MongoDB.
+- Let an administrator configure each collection cadence in the Settings page. Settings must expose enabled/disabled controls and numeric intervals from 1 to 1440 minutes for inventory and capacity metrics collection, with the saved value becoming the scheduler's source of truth.
+- Do not translate every interval directly to `*/N` cron because arbitrary intervals do not map reliably across hour and day boundaries.
+- Run one durable one-minute dispatcher schedule. The dispatcher checks application-owned `next_run_at` values using PostgreSQL time and enqueues work only when a cadence is due.
+- Use separate schedule state for inventory and capacity metrics. A delayed or restarted worker performs at most one catch-up dispatch, then advances `next_run_at`; it must not create a burst for every missed interval.
+- Fan scheduled inventory work out into one job per enabled Manager. A slow or unavailable Manager must not block collection for other Managers.
+- Keep manual Manager collection available through the existing API and shared collection service. Manual and scheduled collection must use identical credential decryption, URL normalization, TLS policy, oVirt request code, snapshot persistence, and normalization logic.
+- Treat a returned snapshot with `status: failed` as a failed job attempt. A worker must not mark a scheduled job successful merely because a failed snapshot row was saved.
+- PostgreSQL is required for durable scheduling. If PostgreSQL or pg-boss is unavailable, manual collection and existing successful inventory remain available, while scheduler health reports a clear unavailable state.
+
+### Queue And Job Model
+
+- Queue `inventory-dispatch`: runs once per minute and evaluates whether inventory collection is due.
+- Queue `inventory-manager-collect`: one job per enabled Manager, keyed by Manager ID to prevent overlapping queued or active work for the same Manager.
+- Queue `metrics-dispatch`: runs once per minute and evaluates whether capacity metrics collection is due.
+- Queue `metrics-manager-collect`: one job per enabled Manager, with per-Manager overlap prevention.
+- Queue `scheduler-dead-letter`: stores terminally failed inventory and metrics jobs for operator review and controlled redrive.
+- Job payloads contain only stable identifiers and scheduling metadata. Credentials, tokens, decrypted passwords, and authorization headers must never be stored in pg-boss payloads or outputs.
+- Store application schedule state in PostgreSQL with at least: job type, enabled state, interval minutes, next run, last queued time, last started time, last completed time, last result, last error summary, consecutive failures, and updated time.
+
+### Failure And Concurrency Policy
+
+- Default to one active inventory job per Manager and one active metrics job per Manager.
+- Use bounded worker concurrency across different Managers so one unreachable Manager does not serialize or block the estate.
+- Apply an end-to-end job deadline and request-level timeouts. Timed-out work must fail cleanly, release its worker lease, and become retryable.
+- Retry transient DNS, network, TLS, HTTP 429, and HTTP 5xx failures with bounded exponential backoff and jitter.
+- Do not retry invalid credentials, disabled Managers, malformed Manager URLs, or permanent validation failures until configuration changes.
+- Record `success`, `partial`, and `failed` outcomes from the collected snapshot. Only `success` and approved `partial` results count as successful job completion.
+- Preserve the last known-good current inventory when jobs fail. Failed attempts remain visible as collection evidence.
+- Use worker heartbeats and graceful shutdown. Container termination must stop accepting jobs, allow bounded active work to finish, and return unfinished work to the queue for retry.
+
+### Observability
+
+- Extend health reporting with scheduler backend, worker status, database connectivity, queue depth, active jobs, retrying jobs, dead-letter count, last dispatcher heartbeat, next due time, and last successful collection.
+- Record one audit event when work is queued and one when each Manager job finishes. Audit metadata includes job ID, Manager ID, scheduled/manual source, attempt number, duration, snapshot ID, status, warning count, and error count.
+- Replace the misleading `collection.scheduled_completed` result with aggregate `success`, `partial`, or `failed` status based on Manager job outcomes.
+- Expose redacted scheduler state through an admin-only API for troubleshooting. Do not expose pg-boss connection strings, payloads containing secrets, or raw authorization failures.
+- Keep completed and failed job retention bounded. Document operator procedures for inspecting, retrying, and deleting dead-letter jobs.
+
+### Implementation Phases
+
+#### Phase 1: PostgreSQL Job Foundation
+
+- [ ] Add pg-boss and pin a reviewed compatible version.
+- [ ] Add application-owned schedule-state migration, required indexes, and rollback-safe migration tests.
+- [ ] Add a scheduler service that owns pg-boss startup, queue creation, event handlers, and graceful shutdown.
+- [ ] Add Settings-page controls for inventory and capacity metrics collection: enabled state and an administrator-editable interval of 1 to 1440 minutes.
+- [ ] Keep scheduler backend and worker concurrency as deployment configuration rather than user-facing Settings controls.
+
+**Checkpoint:** pg-boss initializes against PostgreSQL, starts and stops cleanly, and no collection jobs run yet.
+
+#### Phase 2: Inventory Scheduling
+
+- [ ] Extract or reuse a single per-Manager collection service shared by manual and worker execution.
+- [ ] Implement the durable inventory dispatcher and one job per enabled Manager.
+- [ ] Make Settings-page interval or enabled-state updates change schedule state atomically without restarting an in-memory timer, and show the next scheduled collection time after saving.
+- [ ] Add retry classification, job deadlines, overlap prevention, audit events, and dead-letter handling.
+- [ ] Keep the legacy scheduler available behind a temporary rollout flag, but never allow both backends to enqueue production jobs simultaneously.
+
+**Checkpoint:** scheduled and manual collection produce equivalent results for the same Manager, and one failed Manager does not block another.
+
+#### Phase 3: Metrics Scheduling
+
+- [ ] Move capacity metrics dispatch and per-Manager collection onto pg-boss.
+- [ ] Keep inventory and metrics queues isolated so metrics backlog cannot delay inventory snapshots.
+- [ ] Validate that metrics continue writing only to the approved metrics backend and do not mix time-series samples into snapshot storage.
+
+**Checkpoint:** inventory and metrics schedules run independently with separate concurrency, retries, and health state.
+
+#### Phase 4: Cutover And Cleanup
+
+- [ ] Deploy pg-boss schema and workers with job execution disabled, then validate health and queue access.
+- [ ] Enable durable scheduling for a controlled soak period and confirm no duplicate Manager collections.
+- [ ] Disable and remove `server/scheduler.ts` and `server/metrics-scheduler.ts` after the soak period passes.
+- [ ] Remove the temporary legacy backend flag and update Compose, README, operations notes, and release artifacts.
+
+**Done when:** Scheduled inventory and metrics survive process restarts, avoid duplicate or overlapping Manager jobs, isolate Manager failures, retry transient faults, expose accurate health, and pass multi-instance and crash-recovery tests.
+
+### Validation Plan
+
+- [ ] Unit-test cadence calculations, database-time due checks, catch-up behavior, retry classification, redaction, and aggregate status.
+- [ ] Integration-test pg-boss against PostgreSQL 16 rather than relying only on mocks.
+- [ ] Start two worker instances against one database and prove that only one job runs for a Manager and due time.
+- [ ] Stop a worker after job acquisition, restart it, and prove the job is recovered without duplicate snapshot persistence.
+- [ ] Save a new interval or enabled state through the Settings page and prove the next due time changes without an application restart or duplicate schedule.
+- [ ] Simulate one successful and one unreachable Manager and prove both produce independent outcomes.
+- [ ] Prove failed snapshots retry and never produce a false successful scheduler audit result.
+- [ ] Verify manual collection remains functional while the durable scheduler is disabled or degraded.
+- [ ] Run `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`, and `docker buildx build --platform linux/amd64,linux/arm64 .`.
+
+### Alternatives Considered
+
+- Graphile Worker: strong PostgreSQL-backed reliability, retries, recurring jobs, and optional backfill, but its crontab-oriented configuration is less direct for the existing dynamically editable numeric interval.
+- BullMQ: mature scheduling and retry support, but it adds Redis and another stateful service to the Compose and operations footprint.
+- `node-cron` or Bree: suitable for process-local timing, but they do not by themselves provide the durable database-owned job state, multi-instance coordination, retries, and dead-letter workflow required here.
+- `pg_cron`: durable inside PostgreSQL, but it is an extension and is better suited to SQL execution than invoking and supervising the existing Node collection service.
+
+### Rollback
+
+- Keep the legacy scheduler code behind a temporary backend flag during rollout.
+- A rollback disables pg-boss workers and re-enables the legacy scheduler; it must not delete pg-boss schema or job history during the incident.
+- Before rollback, pause pg-boss queues or remove active schedules so both implementations cannot collect the same Manager concurrently.
+- Remove the legacy path only after the durable scheduler has completed the agreed soak period with restart, failure, and multi-instance evidence.

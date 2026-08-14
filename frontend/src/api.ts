@@ -261,6 +261,9 @@ export interface SavedViewInput {
 export interface AppSettings {
   snapshotIntervalMinutes: number;
   snapshotRetentionDays: number;
+  inventoryCollectionEnabled: boolean;
+  metricsCollectionEnabled: boolean;
+  metricsIntervalMinutes: number;
   collectorEnabled: boolean;
   updatedAt?: string;
 }
@@ -268,6 +271,9 @@ export interface AppSettings {
 export interface AppSettingsInput {
   snapshotIntervalMinutes: number;
   snapshotRetentionDays: number;
+  inventoryCollectionEnabled: boolean;
+  metricsCollectionEnabled: boolean;
+  metricsIntervalMinutes: number;
 }
 
 export async function getHealth(): Promise<HealthResponse> {

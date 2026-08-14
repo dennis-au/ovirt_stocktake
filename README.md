@@ -18,7 +18,7 @@ Supported platforms:
 Release image:
 
 ```bash
-docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.15
+docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.19
 ```
 
 ## Quick Start With Docker Compose
@@ -46,12 +46,12 @@ To use a different published image, set `OVIRT_INVENTORY_IMAGE` in `.env`. For e
 
 ## Downloadable Compose Bundle
 
-Each GitHub release includes an `ovirt-inventory-compose-v0.1.15.tar.gz` deployment bundle containing `compose.yaml`, empty `inventory_data/` and `postgres_data/` folders, `.env.example`, `setup.sh`, and this README. Download, extract, generate the editable `.env`, then start the app:
+Each GitHub release includes an `ovirt-inventory-compose-v0.1.19.tar.gz` deployment bundle containing `compose.yaml`, empty `inventory_data/` and `postgres_data/` folders, `.env.example`, `setup.sh`, and this README. Download, extract, generate the editable `.env`, then start the app:
 
 ```bash
-curl -LO https://github.com/dennis-au/ovirt_stocktake/releases/download/v0.1.15/ovirt-inventory-compose-v0.1.15.tar.gz
-tar -xzf ovirt-inventory-compose-v0.1.15.tar.gz
-cd ovirt-inventory-compose-v0.1.15
+curl -LO https://github.com/dennis-au/ovirt_stocktake/releases/download/v0.1.19/ovirt-inventory-compose-v0.1.19.tar.gz
+tar -xzf ovirt-inventory-compose-v0.1.19.tar.gz
+cd ovirt-inventory-compose-v0.1.19
 ./setup.sh
 # Optionally edit .env, for example to change the host port.
 docker compose pull
@@ -70,8 +70,9 @@ docker compose up -d
 | `OVIRT_INVENTORY_DATABASE_URL` | PostgreSQL connection URL for normalized inventory and Capacity metrics. |
 | `OVIRT_INVENTORY_DATABASE_SSL` | Require SSL for the PostgreSQL connection. Defaults to `false`. |
 | `OVIRT_INVENTORY_METRICS_BACKEND` | Set to `postgres`, `timescale`, or `timescaledb` to enable Capacity metrics collection. Compose sets this to `postgres`. |
-| `OVIRT_INVENTORY_METRICS_SYNC_MINUTES` | Capacity metrics collection cadence. Defaults to `5`. |
-| `OVIRT_INVENTORY_COLLECTOR_ENABLED` | Enables scheduled inventory and Capacity metrics collection. Defaults to `true`; set to `false` to disable schedules. |
+| `OVIRT_INVENTORY_METRICS_SYNC_MINUTES` | Initial Capacity metrics collection cadence. Defaults to `5`; administrators can change it in Settings. |
+| `OVIRT_INVENTORY_SCHEDULER_WORKER_CONCURRENCY` | Maximum scheduled Manager jobs processed per app instance. Defaults to `2`; valid range is `1` to `16`. |
+| `OVIRT_INVENTORY_COLLECTOR_ENABLED` | Deployment-level master switch for durable scheduled collection. Defaults to `true`; set to `false` to keep all schedules disabled. |
 | `OVIRT_INVENTORY_ENCRYPTION_KEY` | Required for encrypting saved oVirt Manager credentials. |
 | `OVIRT_INVENTORY_SESSION_SECRET` | Required session signing secret for app login. |
 | `OVIRT_INVENTORY_SECURE_COOKIES` | Set `false` for direct HTTP access, or `true` behind HTTPS. Defaults to `true` in production when unset. |
@@ -91,7 +92,8 @@ Capacity uses collected oVirt VM and host statistics plus storage-domain utiliza
 
 Admins can open **Settings** in the app to configure miscellaneous snapshot policy:
 
-- Snapshot interval in minutes. This controls the scheduled backend collection interval. Set `OVIRT_INVENTORY_COLLECTOR_ENABLED=false` only when schedules must be disabled; the environment interval remains the default until it is changed in the app.
+- Inventory and Capacity metrics collection can each be enabled or disabled in Settings, with a user-configurable interval from 1 to 1440 minutes. PostgreSQL-backed pg-boss workers persist schedules, retries, and dead letters across application restarts.
+- `OVIRT_INVENTORY_COLLECTOR_ENABLED=false` remains a deployment-level master switch. Environment interval values only provide initial defaults until an administrator changes the values in Settings.
 - Snapshot data retention in days. Set `0` to keep snapshot history indefinitely. When set above `0`, snapshots older than the retention window are pruned after settings are saved and after future collection runs.
 
 ## Features

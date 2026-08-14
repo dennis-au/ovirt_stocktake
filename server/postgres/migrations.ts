@@ -447,5 +447,27 @@ export const postgresMigrations: PostgresMigration[] = [
       CREATE INDEX IF NOT EXISTS idx_metric_samples_resource_time
         ON metric_samples (manager_id, resource_type, resource_id, metric_name, sampled_at DESC);
     `
+  },
+  {
+    id: "004_scheduler_schedule_state",
+    sql: `
+      CREATE TABLE IF NOT EXISTS scheduler_schedule_state (
+        job_type TEXT PRIMARY KEY CHECK (job_type IN ('inventory', 'metrics')),
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        interval_minutes INTEGER NOT NULL CHECK (interval_minutes BETWEEN 1 AND 1440),
+        next_run_at TIMESTAMPTZ,
+        last_queued_at TIMESTAMPTZ,
+        last_started_at TIMESTAMPTZ,
+        last_completed_at TIMESTAMPTZ,
+        last_result TEXT CHECK (last_result IS NULL OR last_result IN ('success', 'partial', 'failed')),
+        last_error_summary TEXT,
+        consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_scheduler_schedule_next_run
+        ON scheduler_schedule_state (next_run_at)
+        WHERE enabled = TRUE;
+    `
   }
 ];

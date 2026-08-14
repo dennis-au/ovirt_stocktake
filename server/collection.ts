@@ -86,12 +86,11 @@ export function registerCollectionRoutes(
       return reply.code(409).send({ error: "Manager is disabled" });
     }
 
-    const encryptionKey = requireEncryptionKey(config, reply);
-    if (!encryptionKey) {
+    if (!requireEncryptionKey(config, reply)) {
       return;
     }
 
-    const snapshot = await collectAndSaveManagerSnapshot(db, manager, encryptionKey, config.ovirtAllowInsecureTls, config, inventoryDb);
+    const snapshot = await collectManagerSnapshotById(db, config, manager.id, inventoryDb);
     recordAudit(db, {
       actor: currentSession(db, request)?.username,
       action: "collection.completed",
@@ -103,8 +102,7 @@ export function registerCollectionRoutes(
   });
 
   app.post("/api/collect", { preHandler: requireRole(roles.operator) }, async (request, reply) => {
-    const encryptionKey = requireEncryptionKey(config, reply);
-    if (!encryptionKey) {
+    if (!requireEncryptionKey(config, reply)) {
       return;
     }
 
@@ -113,7 +111,7 @@ export function registerCollectionRoutes(
       listEnabledManagers(db),
       BULK_COLLECTION_CONCURRENCY,
       async (manager) => {
-        const snapshot = await collectAndSaveManagerSnapshot(db, manager, encryptionKey, config.ovirtAllowInsecureTls, config, inventoryDb);
+        const snapshot = await collectManagerSnapshotById(db, config, manager.id, inventoryDb);
         recordAudit(db, {
           actor,
           action: "collection.completed",
@@ -144,9 +142,30 @@ export async function collectEnabledManagers(
 
   const snapshots: SnapshotDetail[] = [];
   for (const manager of listEnabledManagers(db)) {
-    snapshots.push(await collectAndSaveManagerSnapshot(db, manager, config.credentialEncryptionKey, config.ovirtAllowInsecureTls, config, inventoryDb));
+    snapshots.push(await collectManagerSnapshotById(db, config, manager.id, inventoryDb));
   }
   return snapshots;
+}
+
+export async function collectManagerSnapshotById(
+  db: SqliteDatabase,
+  config: AppConfig,
+  managerId: string,
+  inventoryDb?: ConnectablePostgres
+): Promise<SnapshotDetail> {
+  if (!config.credentialEncryptionKey) {
+    throw new Error("OVIRT_INVENTORY_ENCRYPTION_KEY is required");
+  }
+
+  const manager = findManager(db, managerId);
+  if (!manager) {
+    throw new Error("Manager not found");
+  }
+  if (!manager.enabled) {
+    throw new Error("Manager is disabled");
+  }
+
+  return collectAndSaveManagerSnapshot(db, manager, config.credentialEncryptionKey, config.ovirtAllowInsecureTls, config, inventoryDb);
 }
 
 async function collectManagersConcurrently(

@@ -380,7 +380,10 @@ export function App() {
     try {
       const saved = await updateSettings({
         snapshotIntervalMinutes: Number(form.get("snapshotIntervalMinutes")),
-        snapshotRetentionDays: Number(form.get("snapshotRetentionDays"))
+        snapshotRetentionDays: Number(form.get("snapshotRetentionDays")),
+        inventoryCollectionEnabled: form.get("inventoryCollectionEnabled") === "on",
+        metricsCollectionEnabled: form.get("metricsCollectionEnabled") === "on",
+        metricsIntervalMinutes: Number(form.get("metricsIntervalMinutes"))
       });
       setSettings(saved);
       setSettingsMessage("Settings saved");
@@ -1032,16 +1035,24 @@ export function App() {
               {settingsMessage && <p className="form-success">{settingsMessage}</p>}
               {settingsLoading && <p className="muted">Loading settings</p>}
               {settings && (
-                <form className="settings-form" key={`${settings.snapshotIntervalMinutes}:${settings.snapshotRetentionDays}`} onSubmit={(event) => void handleSettingsSubmit(event)}>
+                <form
+                  className="settings-form"
+                  key={`${settings.snapshotIntervalMinutes}:${settings.snapshotRetentionDays}:${settings.inventoryCollectionEnabled}:${settings.metricsCollectionEnabled}:${settings.metricsIntervalMinutes}`}
+                  onSubmit={(event) => void handleSettingsSubmit(event)}
+                >
                   <div className="form-card-header">
                     <div>
-                      <h3>Snapshot Policy</h3>
-                      <p>These settings apply to backend snapshot collection and stored snapshot history.</p>
+                      <h3>Collection Schedule</h3>
+                      <p>Configure durable backend collection for inventory and capacity metrics.</p>
                     </div>
                   </div>
                   <div className="settings-fields">
+                    <label className="checkbox-label">
+                      <input name="inventoryCollectionEnabled" type="checkbox" defaultChecked={settings.inventoryCollectionEnabled} />
+                      <span>Enable inventory collection</span>
+                    </label>
                     <label>
-                      <span>Snapshot interval</span>
+                      <span>Inventory interval</span>
                       <input
                         name="snapshotIntervalMinutes"
                         type="number"
@@ -1049,6 +1060,22 @@ export function App() {
                         max="1440"
                         step="1"
                         defaultValue={settings.snapshotIntervalMinutes}
+                        required
+                      />
+                    </label>
+                    <label className="checkbox-label">
+                      <input name="metricsCollectionEnabled" type="checkbox" defaultChecked={settings.metricsCollectionEnabled} />
+                      <span>Enable capacity metrics collection</span>
+                    </label>
+                    <label>
+                      <span>Metrics interval</span>
+                      <input
+                        name="metricsIntervalMinutes"
+                        type="number"
+                        min="1"
+                        max="1440"
+                        step="1"
+                        defaultValue={settings.metricsIntervalMinutes}
                         required
                       />
                     </label>
@@ -1066,7 +1093,12 @@ export function App() {
                     </label>
                   </div>
                   <div className="settings-summary-row" aria-label="Settings summary">
-                    <span className="state-pill">Interval: every {settings.snapshotIntervalMinutes} minutes</span>
+                    <span className="state-pill">
+                      Inventory: {settings.inventoryCollectionEnabled ? `every ${settings.snapshotIntervalMinutes} minutes` : "disabled"}
+                    </span>
+                    <span className="state-pill">
+                      Metrics: {settings.metricsCollectionEnabled ? `every ${settings.metricsIntervalMinutes} minutes` : "disabled"}
+                    </span>
                     <span className="state-pill">
                       Retention: {settings.snapshotRetentionDays === 0 ? "keep indefinitely" : `${settings.snapshotRetentionDays} days`}
                     </span>

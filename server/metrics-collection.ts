@@ -40,6 +40,19 @@ export async function collectEnabledManagerMetrics(
   return results;
 }
 
+export async function collectManagerMetricsById(
+  db: SqliteDatabase,
+  config: AppConfig,
+  managerId: string,
+  inventoryDb?: ConnectablePostgres
+): Promise<MetricsCollectionResult> {
+  const manager = findEnabledManager(db, managerId);
+  if (!manager) {
+    throw new Error("Manager not found or is disabled");
+  }
+  return collectAndStoreManagerMetrics(manager, config, inventoryDb);
+}
+
 export async function collectAndStoreManagerMetrics(
   manager: ManagerCredentialRecord,
   config: AppConfig,
@@ -107,6 +120,14 @@ function listEnabledManagers(db: SqliteDatabase): ManagerCredentialRecord[] {
       "SELECT id, name, url, ignore_tls, username_ciphertext, password_ciphertext FROM managers WHERE enabled = 1 ORDER BY name COLLATE NOCASE"
     )
     .all() as ManagerCredentialRecord[];
+}
+
+function findEnabledManager(db: SqliteDatabase, managerId: string): ManagerCredentialRecord | undefined {
+  return db
+    .prepare(
+      "SELECT id, name, url, ignore_tls, username_ciphertext, password_ciphertext FROM managers WHERE id = ? AND enabled = 1"
+    )
+    .get(managerId) as ManagerCredentialRecord | undefined;
 }
 
 async function ensureManager(inventoryDb: ConnectablePostgres, manager: ManagerCredentialRecord): Promise<void> {

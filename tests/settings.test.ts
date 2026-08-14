@@ -70,23 +70,41 @@ describe("application settings", () => {
     expect(initial.json().settings).toMatchObject({
       snapshotIntervalMinutes: 15,
       snapshotRetentionDays: 0,
-      collectorEnabled: false
+      collectorEnabled: false,
+      inventoryCollectionEnabled: false,
+      metricsCollectionEnabled: false,
+      metricsIntervalMinutes: 5
     });
 
     const update = await app.inject({
       method: "PATCH",
       url: "/api/settings",
       cookies: cookie,
-      payload: { snapshotIntervalMinutes: 30, snapshotRetentionDays: 90 }
+      payload: {
+        snapshotIntervalMinutes: 30,
+        snapshotRetentionDays: 90,
+        inventoryCollectionEnabled: true,
+        metricsCollectionEnabled: true,
+        metricsIntervalMinutes: 20
+      }
     });
     expect(update.statusCode).toBe(200);
     expect(update.json().settings).toMatchObject({
       snapshotIntervalMinutes: 30,
-      snapshotRetentionDays: 90
+      snapshotRetentionDays: 90,
+      inventoryCollectionEnabled: true,
+      metricsCollectionEnabled: true,
+      metricsIntervalMinutes: 20
     });
 
     const stored = await app.inject({ method: "GET", url: "/api/settings", cookies: cookie });
-    expect(stored.json().settings).toMatchObject({ snapshotIntervalMinutes: 30, snapshotRetentionDays: 90 });
+    expect(stored.json().settings).toMatchObject({
+      snapshotIntervalMinutes: 30,
+      snapshotRetentionDays: 90,
+      inventoryCollectionEnabled: true,
+      metricsCollectionEnabled: true,
+      metricsIntervalMinutes: 20
+    });
     await app.close();
   });
 
@@ -120,8 +138,20 @@ describe("application settings", () => {
     const config = testConfig({ collector: { ...testConfig().collector, inventorySyncMinutes: 45 } });
     expect(getAppSettings(db, config).snapshotIntervalMinutes).toBe(45);
 
-    saveAppSettings(db, { snapshotIntervalMinutes: 20, snapshotRetentionDays: 7 });
-    expect(getAppSettings(db, config)).toMatchObject({ snapshotIntervalMinutes: 20, snapshotRetentionDays: 7 });
+    saveAppSettings(db, {
+      snapshotIntervalMinutes: 20,
+      snapshotRetentionDays: 7,
+      inventoryCollectionEnabled: true,
+      metricsCollectionEnabled: true,
+      metricsIntervalMinutes: 30
+    });
+    expect(getAppSettings(db, config)).toMatchObject({
+      snapshotIntervalMinutes: 20,
+      snapshotRetentionDays: 7,
+      inventoryCollectionEnabled: true,
+      metricsCollectionEnabled: true,
+      metricsIntervalMinutes: 30
+    });
 
     const oldSnapshot = snapshot("manager-1", "2026-08-01T00:00:00.000Z");
     const recentSnapshot = snapshot("manager-1", "2026-08-12T00:00:00.000Z");
