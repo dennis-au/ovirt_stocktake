@@ -228,6 +228,13 @@ button:disabled {
   margin-top: auto;
 }
 
+.sidebar-version {
+  padding: 0 12px 8px;
+  color: rgba(229, 231, 235, 0.5);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .sidebar-nav a {
   display: flex;
   align-items: center;

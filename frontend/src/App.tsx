@@ -69,6 +69,7 @@ import {
   type SnapshotVmInventorySortKey,
   type SessionResponse
 } from "./api";
+import appPackage from "../../package.json";
 import { RelationshipReportBuilder } from "./RelationshipReportBuilder";
 import { CapacityPage } from "./CapacityPage";
 
@@ -682,6 +683,7 @@ export function App() {
             </a>
           </div>
           <div className="sidebar-nav-group sidebar-nav-bottom">
+            <span className="sidebar-version">ovirt-inventory v{appPackage.version}</span>
             <a href="#history" aria-current={activePage === "history" ? "page" : undefined}>
               <History aria-hidden="true" size={17} />
               History
