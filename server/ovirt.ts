@@ -10,6 +10,7 @@ import {
   type ResourceKey,
   type SnapshotPayload
 } from "../shared/snapshot.js";
+import { withoutHostCertificateContent } from "./host-certificate.js";
 
 export interface OvirtCollectionTarget {
   managerId: string;
@@ -111,6 +112,8 @@ export async function collectOvirtSnapshot(target: OvirtCollectionTarget, option
       });
     }
   }
+
+  inventory.hosts = inventory.hosts.map(withoutHostCertificateContent);
 
   inventory.vmSnapshots = await collectChildResources(fetchImpl, target.managerUrl, inventory.vms, "vmSnapshots", "snapshots", "snapshot", authorization, options, errors);
   inventory.affinityGroups = await collectChildResources(

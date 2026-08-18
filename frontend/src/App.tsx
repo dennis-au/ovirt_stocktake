@@ -18,11 +18,13 @@ import {
   Network,
   PackageSearch,
   PanelLeftOpen,
+  Pencil,
   Play,
   RefreshCw,
   Save,
   Server,
   Settings,
+  Trash2,
   Waypoints,
   XCircle
 } from "lucide-react";
@@ -37,6 +39,7 @@ import {
   getRelationships,
   getSettings,
   getSnapshot,
+  getSnapshotHostInventory,
   getSnapshotVmInventory,
   getSession,
   listSavedViews,
@@ -60,6 +63,7 @@ import {
   type ManagerTestCollectionResult,
   type RelationshipResponse,
   type SnapshotDetail,
+  type SnapshotHostInventoryResponse,
   type SnapshotSummary,
   type SnapshotVmInventoryFilters,
   type SnapshotVmInventoryResponse,
@@ -75,6 +79,7 @@ import { collectManagersSequentially } from "./manager-collection";
 
 type PageId = "dashboard" | "inventory" | "capacity" | "relationships" | "managers" | "history" | "settings" | "cluster";
 type SnapshotFilters = { managerId: string; status: string };
+type InventoryView = "vms" | "hardware";
 type InventoryColumnKey =
   | "managerName"
   | "clusterName"
@@ -155,7 +160,9 @@ export function App() {
   const [clusterError, setClusterError] = useState("");
   const [clusterLoading, setClusterLoading] = useState(false);
   const [inventory, setInventory] = useState<SnapshotVmInventoryResponse | undefined>();
+  const [hostInventory, setHostInventory] = useState<SnapshotHostInventoryResponse | undefined>();
   const [inventoryFilters, setInventoryFilters] = useState<SnapshotVmInventoryFilters>({ page: 1, pageSize: 100 });
+  const [inventoryView, setInventoryView] = useState<InventoryView>("vms");
   const [inventoryError, setInventoryError] = useState("");
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [inventoryColumnOrder, setInventoryColumnOrder] = useState<InventoryColumnKey[]>(defaultInventoryColumnOrder);
@@ -193,6 +200,7 @@ export function App() {
       setDashboard(undefined);
       setClusterDetail(undefined);
       setInventory(undefined);
+      setHostInventory(undefined);
       setRelationships(undefined);
       setSettings(undefined);
       setSavedViews([]);
@@ -328,6 +336,7 @@ export function App() {
     setDashboard(undefined);
     setClusterDetail(undefined);
     setInventory(undefined);
+    setHostInventory(undefined);
     setRelationships(undefined);
     setSettings(undefined);
     setSavedViews([]);
@@ -335,11 +344,23 @@ export function App() {
     setSavedViewName("");
   }
 
-  async function loadInventory(filters: SnapshotVmInventoryFilters) {
+  async function loadInventory(filters: SnapshotVmInventoryFilters, view: InventoryView = inventoryView) {
     setInventoryLoading(true);
     setInventoryError("");
     try {
-      setInventory(await getSnapshotVmInventory(filters));
+      if (view === "hardware") {
+        setHostInventory(
+          await getSnapshotHostInventory({
+            search: filters.search,
+            managerId: filters.managerId,
+            clusterId: filters.clusterId,
+            page: filters.page,
+            pageSize: filters.pageSize
+          })
+        );
+      } else {
+        setInventory(await getSnapshotVmInventory(filters));
+      }
     } catch (error) {
       setInventoryError(error instanceof Error ? error.message : "Inventory failed");
     } finally {
@@ -432,6 +453,11 @@ export function App() {
     const nextFilters = { ...inventoryFilters, sortBy, sortDirection, page: 1 };
     setInventoryFilters(nextFilters);
     await loadInventory(nextFilters);
+  }
+
+  function handleInventoryViewChange(view: InventoryView) {
+    setInventoryView(view);
+    void loadInventory(inventoryFilters, view);
   }
 
   function handleInventoryColumnDrop(targetKey: InventoryColumnKey) {
@@ -654,8 +680,9 @@ export function App() {
         { label: "Networks", value: dashboard.totals.networks, icon: Network }
       ]
     : [];
-  const activeInventoryFilterCount = countActiveInventoryFilters(inventoryFilters);
-  const inventoryLatestCollectedAt = latestInventoryCollectedAt(inventory?.rows);
+  const activeInventoryFilterCount = countActiveInventoryFilters(inventoryFilters, inventoryView);
+  const currentInventory = inventoryView === "hardware" ? hostInventory : inventory;
+  const inventoryLatestCollectedAt = latestInventoryCollectedAt(currentInventory?.rows);
   const filteredSnapshots = snapshots.filter((snapshot) => matchesSnapshotFilters(snapshot, snapshotFilters));
   const snapshotManagerOptions = uniqueSnapshotManagers(snapshots);
   const snapshotStatusOptions = uniqueSnapshotStatuses(snapshots);
@@ -876,7 +903,11 @@ export function App() {
                   <PackageSearch aria-hidden="true" size={20} />
                   <div>
                     <h2 id="inventory-title">Inventory</h2>
-                    <p>{inventory ? `${inventory.total} VM records from latest snapshots` : "Latest snapshot VM inventory"}</p>
+                    <p>
+                      {currentInventory
+                        ? `${currentInventory.total} ${inventoryView === "hardware" ? "host" : "VM"} records from latest snapshots`
+                        : `Latest snapshot ${inventoryView === "hardware" ? "host hardware" : "VM"} inventory`}
+                    </p>
                   </div>
                 </div>
                 <div className="topbar-actions">
@@ -884,16 +915,38 @@ export function App() {
                     <RefreshCw aria-hidden="true" size={16} />
                     {inventoryLoading ? "Refreshing" : "Refresh"}
                   </button>
-                  <a className="button secondary" href={snapshotVmInventoryExportUrl("csv", inventoryFilters)}>
-                    <Download aria-hidden="true" size={16} />
-                    Export CSV
-                  </a>
-                  <a className="button secondary" href={snapshotVmInventoryExportUrl("pdf", inventoryFilters)}>
-                    <Download aria-hidden="true" size={16} />
-                    Export PDF
-                  </a>
+                  {inventoryView === "vms" && (
+                    <>
+                      <a className="button secondary" href={snapshotVmInventoryExportUrl("csv", inventoryFilters)}>
+                        <Download aria-hidden="true" size={16} />
+                        Export CSV
+                      </a>
+                      <a className="button secondary" href={snapshotVmInventoryExportUrl("pdf", inventoryFilters)}>
+                        <Download aria-hidden="true" size={16} />
+                        Export PDF
+                      </a>
+                    </>
+                  )}
                 </div>
               </div>
+              <fieldset className="inventory-view-control">
+                <legend>View</legend>
+                <div className="inventory-view-toggle">
+                  <button type="button" aria-pressed={inventoryView === "vms"} className={inventoryView === "vms" ? "active" : ""} onClick={() => handleInventoryViewChange("vms")}>
+                    VM Inventory
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={inventoryView === "hardware"}
+                    className={inventoryView === "hardware" ? "active" : ""}
+                    onClick={() => handleInventoryViewChange("hardware")}
+                  >
+                    Hardware Inventory
+                  </button>
+                </div>
+              </fieldset>
+              {inventoryView === "vms" && (
+                <>
               <form className="saved-view-bar" onSubmit={(event) => void handleSaveInventoryView(event)}>
                 <label>
                   <span>Saved View</span>
@@ -926,8 +979,12 @@ export function App() {
                 </p>
               )}
               {savedViewMessage && <p className="form-success">{savedViewMessage}</p>}
+                </>
+              )}
               <div className="inventory-summary-row" aria-label="Inventory result summary">
-                <span className="state-pill">{inventory ? `${inventory.total} VMs` : "Loading VMs"}</span>
+                <span className="state-pill">
+                  {currentInventory ? `${currentInventory.total} ${inventoryView === "hardware" ? "hosts" : "VMs"}` : `Loading ${inventoryView === "hardware" ? "hosts" : "VMs"}`}
+                </span>
                 <span className="state-pill">{activeInventoryFilterCount} active filters</span>
                 <span className="state-pill">
                   {inventoryLatestCollectedAt ? `Latest: ${new Date(inventoryLatestCollectedAt).toLocaleString()}` : "No collection timestamp"}
@@ -942,7 +999,7 @@ export function App() {
                   <span>Manager</span>
                   <select name="managerId" defaultValue={inventoryFilters.managerId ?? ""}>
                     <option value="">All</option>
-                    {inventory?.filterOptions.managers.map((manager) => (
+                    {currentInventory?.filterOptions.managers.map((manager) => (
                       <option key={manager.value} value={manager.value}>
                         {manager.label}
                       </option>
@@ -953,24 +1010,26 @@ export function App() {
                   <span>Cluster</span>
                   <select name="clusterId" defaultValue={inventoryFilters.clusterId ?? ""}>
                     <option value="">All</option>
-                    {inventory?.filterOptions.clusters.map((cluster) => (
+                    {currentInventory?.filterOptions.clusters.map((cluster) => (
                       <option key={cluster.value} value={cluster.value}>
                         {cluster.label}
                       </option>
                     ))}
                   </select>
                 </label>
-                <label>
-                  <span>Power State</span>
-                  <select name="powerState" defaultValue={inventoryFilters.powerState ?? ""}>
-                    <option value="">All</option>
-                    {inventory?.filterOptions.powerStates.map((state) => (
-                      <option key={state} value={state}>
-                        {state}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                {inventoryView === "vms" && (
+                  <label>
+                    <span>Power State</span>
+                    <select name="powerState" defaultValue={inventoryFilters.powerState ?? ""}>
+                      <option value="">All</option>
+                      {inventory?.filterOptions.powerStates.map((state) => (
+                        <option key={state} value={state}>
+                          {state}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <div className="manager-actions">
                   <button className="button" type="submit" disabled={inventoryLoading} aria-busy={inventoryLoading}>
                     {inventoryLoading ? "Filtering" : "Filter"}
@@ -986,7 +1045,7 @@ export function App() {
                 </p>
               )}
               {inventoryLoading && <p className="muted">Loading inventory</p>}
-              {inventory && (
+              {inventoryView === "vms" && inventory && (
                 <InventoryTable
                   columnOrder={inventoryColumnOrder}
                   draggedColumn={draggedInventoryColumn}
@@ -998,6 +1057,7 @@ export function App() {
                   sortDirection={inventoryFilters.sortDirection}
                 />
               )}
+              {inventoryView === "hardware" && hostInventory && <HardwareInventoryTable inventory={hostInventory} />}
             </section>
           )}
 
@@ -1219,29 +1279,35 @@ export function App() {
                 {managers.length === 0 && <p className="empty-state">No managers saved yet</p>}
                 {managers.map((manager) => (
                   <article className="manager-row" key={manager.id}>
-                    <div>
+                    <div className="manager-identity">
                       <strong>{manager.name}</strong>
-                      <span>{manager.url}</span>
+                      <span className="manager-url">{manager.url}</span>
                     </div>
-                    <span className={`state-pill ${manager.enabled ? "status-success" : "status-muted"}`}>{manager.enabled ? "Enabled" : "Disabled"}</span>
-                    {manager.ignoreTls && <span className="state-pill status-warning">Ignore TLS</span>}
-                    <span className="state-pill">{manager.credentialStatus}</span>
-                    <button
-                      className="button secondary"
-                      type="button"
-                      disabled={Boolean(collectionBusyId) || !manager.enabled}
-                      aria-busy={collectionBusyId === manager.id}
-                      onClick={() => void handleCollect(manager)}
-                    >
-                      <Play aria-hidden="true" size={16} />
-                      {collectionBusyId === manager.id ? "Collecting" : "Collect"}
-                    </button>
-                    <button className="button secondary" type="button" onClick={() => setEditingManager(manager)}>
-                      Edit
-                    </button>
-                    <button className="button danger" type="button" onClick={() => void handleManagerDelete(manager.id)}>
-                      Remove
-                    </button>
+                    <div className="manager-statuses" aria-label={`Status for ${manager.name}`}>
+                      <span className={`state-pill ${manager.enabled ? "status-success" : "status-muted"}`}>{manager.enabled ? "Enabled" : "Disabled"}</span>
+                      {manager.ignoreTls && <span className="state-pill status-warning">TLS verification disabled</span>}
+                      <span className="state-pill manager-credential">Credentials saved</span>
+                    </div>
+                    <div className="manager-actions manager-row-actions">
+                      <button
+                        className="button secondary"
+                        type="button"
+                        disabled={Boolean(collectionBusyId) || !manager.enabled}
+                        aria-busy={collectionBusyId === manager.id}
+                        onClick={() => void handleCollect(manager)}
+                      >
+                        <Play aria-hidden="true" size={16} />
+                        {collectionBusyId === manager.id ? "Collecting" : "Collect"}
+                      </button>
+                      <button className="button secondary" type="button" onClick={() => setEditingManager(manager)}>
+                        <Pencil aria-hidden="true" size={16} />
+                        Edit
+                      </button>
+                      <button className="button danger" type="button" onClick={() => void handleManagerDelete(manager.id)}>
+                        <Trash2 aria-hidden="true" size={16} />
+                        Remove
+                      </button>
+                    </div>
                   </article>
                 ))}
               </div>
@@ -1398,7 +1464,18 @@ function ClusterTable({
         <p className="empty-state">No clusters collected yet</p>
       ) : (
         <div className="table-scroll">
-          <table className="data-table adaptive-data-table">
+          <table className="data-table adaptive-data-table overview-cluster-data-table">
+            <colgroup>
+              <col className="overview-cluster-name-column" />
+              <col className="overview-cluster-manager-column" />
+              <col className="overview-cluster-datacenter-column" />
+              <col className="overview-cluster-count-column" />
+              <col className="overview-cluster-count-column" />
+              <col className="overview-cluster-storage-column" />
+              <col className="overview-cluster-version-column" />
+              <col className="overview-cluster-freshness-column" />
+              <col className="overview-cluster-status-column" />
+            </colgroup>
             <thead>
               <tr>
                 <th scope="col">Cluster</th>
@@ -1523,6 +1600,65 @@ function InventoryTable({
                       {column.render(vm)}
                     </td>
                   ))}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function HardwareInventoryTable({ inventory }: { inventory: SnapshotHostInventoryResponse }) {
+  return (
+    <section className="table-card inventory-table-card" aria-labelledby="hardware-inventory-table-title">
+      <div className="table-title">
+        <h3 id="hardware-inventory-table-title">Hardware Details</h3>
+        <span className="table-hint">Host hardware, VDSM version, and certificate expiry</span>
+      </div>
+      <div className="table-scroll inventory-table-scroll">
+        <table className="data-table hardware-inventory-data-table">
+          <thead>
+            <tr>
+              <th scope="col">Manager</th>
+              <th scope="col">Cluster</th>
+              <th scope="col">Host</th>
+              <th scope="col">Status</th>
+              <th scope="col">Host OS</th>
+              <th scope="col">oVirt/VDSM Version</th>
+              <th scope="col">Certificate Expires</th>
+              <th scope="col">Physical CPU</th>
+              <th scope="col">Physical RAM</th>
+              <th scope="col">Hosted VMs</th>
+              <th scope="col">Allocated Workload</th>
+              <th scope="col">Collected</th>
+            </tr>
+          </thead>
+          <tbody>
+            {inventory.rows.length === 0 ? (
+              <tr>
+                <td className="empty-table-cell" colSpan={12}>
+                  No hosts match the current filters
+                </td>
+              </tr>
+            ) : (
+              inventory.rows.map((host) => (
+                <tr key={`${host.managerId}:${host.hostId}`}>
+                  <td>{host.managerName}</td>
+                  <td>{host.clusterName ?? "-"}</td>
+                  <td className="strong-cell">{host.hostName}</td>
+                  <td>
+                    <span className={`state-pill ${hostInventoryStatusClass(host.status)}`}>{host.status ?? "Unknown"}</span>
+                  </td>
+                  <td>{host.hostOs ?? "-"}</td>
+                  <td>{host.vdsmVersion ?? "-"}</td>
+                  <td>{formatCertificateExpiry(host.certificateExpiresAt)}</td>
+                  <td>{host.physicalCpuThreads === undefined ? "-" : `${host.physicalCpuThreads.toLocaleString()} threads`}</td>
+                  <td>{formatMemory(host.physicalMemoryMiB)}</td>
+                  <td>{host.hostedVmCount.toLocaleString()}</td>
+                  <td>{formatHostWorkload(host)}</td>
+                  <td>{new Date(host.collectedAt).toLocaleString()}</td>
                 </tr>
               ))
             )}
@@ -1658,13 +1794,42 @@ function statusClass(status: SnapshotSummary["status"]) {
   return "status-danger";
 }
 
-function countActiveInventoryFilters(filters: SnapshotVmInventoryFilters) {
-  return [filters.search, filters.managerId, filters.clusterId, filters.powerState].filter(Boolean).length;
+function countActiveInventoryFilters(filters: SnapshotVmInventoryFilters, view: InventoryView) {
+  return [filters.search, filters.managerId, filters.clusterId, ...(view === "vms" ? [filters.powerState] : [])].filter(Boolean).length;
 }
 
-function latestInventoryCollectedAt(rows: SnapshotVmInventoryRow[] | undefined) {
+function latestInventoryCollectedAt(rows: Array<{ collectedAt: string }> | undefined) {
   const times = (rows ?? []).map((row) => Date.parse(row.collectedAt)).filter((value) => Number.isFinite(value));
   return times.length ? new Date(Math.max(...times)).toISOString() : undefined;
+}
+
+function hostInventoryStatusClass(status: string | undefined) {
+  const normalized = status?.toLowerCase();
+  if (normalized === "up") {
+    return "status-success";
+  }
+  if (normalized === "maintenance" || normalized === "installing") {
+    return "status-warning";
+  }
+  return "status-muted";
+}
+
+function formatCertificateExpiry(value: string | undefined) {
+  if (!value) {
+    return "-";
+  }
+  const expiry = Date.parse(value);
+  if (!Number.isFinite(expiry)) {
+    return "-";
+  }
+  const daysUntilExpiry = Math.ceil((expiry - Date.now()) / 86_400_000);
+  const status = daysUntilExpiry < 0 ? "status-danger" : daysUntilExpiry <= 30 ? "status-warning" : "status-success";
+  return <span className={`state-pill ${status}`}>{new Date(expiry).toLocaleDateString()}</span>;
+}
+
+function formatHostWorkload(host: SnapshotHostInventoryResponse["rows"][number]) {
+  const vcpu = host.allocatedVcpu === undefined ? "-" : `${host.allocatedVcpu.toLocaleString()} vCPU`;
+  return `${vcpu} / ${formatMemory(host.allocatedRamMiB)}`;
 }
 
 function matchesSnapshotFilters(snapshot: SnapshotSummary, filters: SnapshotFilters) {

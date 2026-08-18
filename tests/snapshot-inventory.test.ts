@@ -67,7 +67,20 @@ function snapshot(managerId: string, managerName: string): SnapshotPayload {
       ...emptyInventoryResources(),
       dataCenters: [{ id: "dc-1", name: "Default" }],
       clusters: [{ id: "cluster-1", name: "Default", data_center: { id: "dc-1" } }],
-      hosts: [{ id: "host-1", name: "node-01", cluster: { id: "cluster-1" } }],
+      hosts: [
+        {
+          id: "host-1",
+          name: "node-01",
+          cluster: { id: "cluster-1" },
+          status: "up",
+          os: { description: "Red Hat Virtualization Host 4.4", version: { full_version: "4.4.10" } },
+          version: { full_version: "4.4.10" },
+          certificateExpiresAt: "2026-11-14T00:00:00.000Z",
+          certificate: { content: "raw-certificate-material-must-not-leak" },
+          cpu: { topology: { sockets: 2, cores: 12, threads: 2 } },
+          memory: 274877906944
+        }
+      ],
       storageDomains: [{ id: "sd-1", name: "data", data_center: { id: "dc-1" } }],
       vms: [
         {
@@ -138,6 +151,41 @@ function snapshot(managerId: string, managerName: string): SnapshotPayload {
 }
 
 describe("snapshot-backed VM inventory", () => {
+  it("lists host hardware details without exposing certificate material", async () => {
+    const { app, cookie } = await authenticatedApp();
+    const managerId = await createManager(app, cookie, "lab");
+    const saved = await app.inject({ method: "POST", url: "/api/snapshots", cookies: cookie, payload: snapshot(managerId, "lab") });
+
+    expect(saved.statusCode).toBe(201);
+    expect(saved.body).not.toContain("raw-certificate-material-must-not-leak");
+
+    const response = await app.inject({ method: "GET", url: "/api/inventory/snapshot-hosts", cookies: cookie });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().inventory.rows).toEqual([
+      expect.objectContaining({
+        managerName: "lab",
+        clusterName: "Default",
+        hostName: "node-01",
+        status: "up",
+        hostOs: "Red Hat Virtualization Host 4.4",
+        vdsmVersion: "4.4.10",
+        certificateExpiresAt: "2026-11-14T00:00:00.000Z",
+        physicalCpuThreads: 48,
+        physicalMemoryMiB: 262144,
+        hostedVmCount: 2,
+        allocatedVcpu: 5,
+        allocatedRamMiB: 12292
+      })
+    ]);
+    expect(response.body).not.toContain("raw-certificate-material-must-not-leak");
+
+    const latest = await app.inject({ method: "GET", url: "/api/snapshots/latest", cookies: cookie });
+    expect(latest.statusCode).toBe(200);
+    expect(latest.body).not.toContain("raw-certificate-material-must-not-leak");
+    await app.close();
+  });
+
   it("lists, filters, and exports latest snapshot VM inventory", async () => {
     const { app, cookie } = await authenticatedApp();
     const managerId = await createManager(app, cookie, "lab");

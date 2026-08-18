@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { currentSession } from "./auth.js";
 import { recordAudit } from "./audit.js";
 import type { SqliteDatabase } from "./db.js";
+import { certificateExpiresAtFromHost } from "./host-certificate.js";
 import { requireRole, roles } from "./rbac.js";
 import { type InventoryResource, type InventoryResources } from "../shared/snapshot.js";
 
@@ -61,6 +62,50 @@ export interface SnapshotVmInventoryRow {
   storageAllocatedGiB?: number;
   storageUsedGiB?: number;
   snapshotNames: string[];
+}
+
+export interface SnapshotHostInventoryRow {
+  managerId: string;
+  managerName: string;
+  snapshotId: string;
+  collectedAt: string;
+  clusterId?: string;
+  clusterName?: string;
+  hostId: string;
+  hostName: string;
+  status?: string;
+  hostOs?: string;
+  vdsmVersion?: string;
+  certificateExpiresAt?: string;
+  physicalCpuThreads?: number;
+  physicalMemoryMiB?: number;
+  hostedVmCount: number;
+  allocatedVcpu?: number;
+  allocatedRamMiB?: number;
+}
+
+interface SnapshotHostInventoryQuery {
+  page: number;
+  pageSize: number;
+  filters: SnapshotHostInventoryFilters;
+}
+
+interface SnapshotHostInventoryFilters {
+  search?: string;
+  managerId?: string;
+  clusterId?: string;
+}
+
+export interface SnapshotHostInventoryResult {
+  rows: SnapshotHostInventoryRow[];
+  page: number;
+  pageSize: number;
+  total: number;
+  filters: SnapshotHostInventoryFilters;
+  filterOptions: {
+    managers: Array<{ value: string; label: string }>;
+    clusters: Array<{ value: string; label: string }>;
+  };
 }
 
 export interface RelationshipRow {
@@ -150,6 +195,10 @@ export function registerSnapshotInventoryRoutes(app: FastifyInstance, db: Sqlite
     inventory: querySnapshotVmInventory(db, parseSnapshotVmInventoryQuery(request.query))
   }));
 
+  app.get("/api/inventory/snapshot-hosts", { preHandler: requireRole(roles.read) }, async (request) => ({
+    inventory: querySnapshotHostInventory(db, parseSnapshotHostInventoryQuery(request.query))
+  }));
+
   app.get("/api/inventory/relationships", { preHandler: requireRole(roles.read) }, async () => ({
     relationships: queryRelationships(db)
   }));
@@ -214,6 +263,26 @@ export function querySnapshotVmInventory(db: SqliteDatabase, query: SnapshotVmIn
   };
 }
 
+export function querySnapshotHostInventory(db: SqliteDatabase, query: SnapshotHostInventoryQuery): SnapshotHostInventoryResult {
+  const allRows = allLatestSnapshotHostRows(db);
+  const filteredRows = allRows.filter((row) => matchesHostFilters(row, query.filters));
+  const pageSize = Math.min(Math.max(query.pageSize, 1), 500);
+  const page = Math.max(query.page, 1);
+  const start = (page - 1) * pageSize;
+
+  return {
+    rows: filteredRows.slice(start, start + pageSize),
+    page,
+    pageSize,
+    total: filteredRows.length,
+    filters: query.filters,
+    filterOptions: {
+      managers: uniquePairs(allRows.map((row) => ({ value: row.managerId, label: row.managerName }))),
+      clusters: uniquePairs(allRows.filter((row) => row.clusterId).map((row) => ({ value: row.clusterId!, label: row.clusterName ?? row.clusterId! })))
+    }
+  };
+}
+
 export function queryRelationships(db: SqliteDatabase): RelationshipResult {
   const rows = allLatestRelationshipRows(db);
   return {
@@ -230,6 +299,14 @@ function allLatestSnapshotVmRows(db: SqliteDatabase): SnapshotVmInventoryRow[] {
       return [];
     }
     return snapshotRows(manager, snapshot);
+  });
+}
+
+function allLatestSnapshotHostRows(db: SqliteDatabase): SnapshotHostInventoryRow[] {
+  const managers = db.prepare("SELECT id, name, url FROM managers ORDER BY name COLLATE NOCASE").all() as ManagerRow[];
+  return managers.flatMap((manager) => {
+    const snapshot = latestInventorySnapshot(db, manager.id);
+    return snapshot ? hostRows(manager, snapshot) : [];
   });
 }
 
@@ -297,6 +374,62 @@ function snapshotRows(manager: ManagerRow, snapshot: SnapshotRow): SnapshotVmInv
       snapshotNames: snapshotsByVmId.get(vmId) ?? []
     };
   });
+}
+
+function hostRows(manager: ManagerRow, snapshot: SnapshotRow): SnapshotHostInventoryRow[] {
+  const resources = JSON.parse(snapshot.resources_json) as InventoryResources;
+  const clusters = new Map(resources.clusters.map((item) => [stringValue(item.id), item]));
+  const vmsByHostId = new Map<string, InventoryResource[]>();
+
+  for (const vm of resources.vms) {
+    const hostId = refId(vm.host);
+    if (hostId) {
+      const vms = vmsByHostId.get(hostId);
+      if (vms) {
+        vms.push(vm);
+      } else {
+        vmsByHostId.set(hostId, [vm]);
+      }
+    }
+  }
+
+  return resources.hosts
+    .flatMap((host): SnapshotHostInventoryRow[] => {
+      const hostId = stringValue(host.id);
+      if (!hostId) {
+        return [];
+      }
+      const clusterId = refId(host.cluster);
+      const cluster = clusterId ? clusters.get(clusterId) : undefined;
+      const vms = vmsByHostId.get(hostId) ?? [];
+      const allocatedVcpu = sumOptional(vms.map(vcpuCount));
+      const allocatedRamTotalMiB = sumOptional(vms.map(allocatedRamMiB));
+
+      return [{
+        managerId: manager.id,
+        managerName: manager.name,
+        snapshotId: snapshot.id,
+        collectedAt: snapshot.collected_at,
+        clusterId,
+        clusterName: refName(host.cluster) ?? stringValue(cluster?.name) ?? clusterId,
+        hostId,
+        hostName: stringValue(host.name) ?? hostId,
+        status: stringValue(host.status),
+        hostOs: hostOperatingSystem(host),
+        vdsmVersion: versionLabel(host.version),
+        certificateExpiresAt: certificateExpiresAtFromHost(host),
+        physicalCpuThreads: hostCpuThreads(host),
+        physicalMemoryMiB: bytesToMiB(host.memory),
+        hostedVmCount: vms.length,
+        allocatedVcpu,
+        allocatedRamMiB: allocatedRamTotalMiB
+      }];
+    })
+    .sort((left, right) =>
+      compareSortValues(left.managerName, right.managerName) ||
+      compareSortValues(left.clusterName, right.clusterName) ||
+      compareSortValues(left.hostName, right.hostName)
+    );
 }
 
 function relationshipRows(manager: ManagerRow, snapshot: SnapshotRow): RelationshipRow[] {
@@ -392,6 +525,19 @@ function parseSnapshotVmInventoryQuery(query: unknown): SnapshotVmInventoryQuery
   };
 }
 
+function parseSnapshotHostInventoryQuery(query: unknown): SnapshotHostInventoryQuery {
+  const raw = query && typeof query === "object" ? (query as Record<string, unknown>) : {};
+  return {
+    page: positiveInteger(raw.page, 1),
+    pageSize: positiveInteger(raw.pageSize, 100),
+    filters: {
+      search: stringValue(raw.search),
+      managerId: stringValue(raw.managerId),
+      clusterId: stringValue(raw.clusterId)
+    }
+  };
+}
+
 function parseExportFormat(query: unknown): "csv" | "pdf" {
   const raw = query && typeof query === "object" ? (query as Record<string, unknown>) : {};
   return stringValue(raw.format) === "pdf" ? "pdf" : "csv";
@@ -429,6 +575,23 @@ function matchesFilters(row: SnapshotVmInventoryRow, filters: SnapshotVmInventor
     return haystack.includes(filters.search.toLowerCase());
   }
   return true;
+}
+
+function matchesHostFilters(row: SnapshotHostInventoryRow, filters: SnapshotHostInventoryFilters): boolean {
+  if (filters.managerId && row.managerId !== filters.managerId) {
+    return false;
+  }
+  if (filters.clusterId && row.clusterId !== filters.clusterId) {
+    return false;
+  }
+  if (!filters.search) {
+    return true;
+  }
+  return [row.managerName, row.clusterName, row.hostName, row.status, row.hostOs, row.vdsmVersion]
+    .filter(isString)
+    .join(" ")
+    .toLowerCase()
+    .includes(filters.search.toLowerCase());
 }
 
 function filterOptions(rows: SnapshotVmInventoryRow[]): SnapshotVmInventoryResult["filterOptions"] {
@@ -675,6 +838,42 @@ function allocatedRamMiB(vm: InventoryResource): number | undefined {
   }
   const bytes = numberValue(vm.memory);
   return bytes === undefined ? undefined : Math.round(bytes / 1024 / 1024);
+}
+
+function hostOperatingSystem(host: InventoryResource): string | undefined {
+  const os = recordValue(host.os);
+  const fallback = [stringValue(os?.type), versionLabel(os?.version)].filter(isString).join(" ");
+  return stringValue(os?.description) ?? (fallback || undefined);
+}
+
+function versionLabel(value: unknown): string | undefined {
+  const version = recordValue(value);
+  if (!version) {
+    return undefined;
+  }
+  const fallback = [version.major, version.minor, version.build, version.revision]
+    .map(numberValue)
+    .filter((part): part is number => part !== undefined)
+    .join(".");
+  return stringValue(version.full_version) ?? stringValue(version.fullVersion) ?? (fallback || undefined);
+}
+
+function hostCpuThreads(host: InventoryResource): number | undefined {
+  const topology = recordValue(recordValue(host.cpu)?.topology);
+  const sockets = numberValue(topology?.sockets);
+  const cores = numberValue(topology?.cores);
+  const threads = numberValue(topology?.threads);
+  return sockets && cores && threads ? sockets * cores * threads : undefined;
+}
+
+function bytesToMiB(value: unknown): number | undefined {
+  const bytes = numberValue(value);
+  return bytes === undefined ? undefined : Math.round(bytes / 1024 / 1024);
+}
+
+function sumOptional(values: Array<number | undefined>): number | undefined {
+  const present = values.filter((value): value is number => value !== undefined);
+  return present.length ? present.reduce((sum, value) => sum + value, 0) : undefined;
 }
 
 function vmDiskTotals(vm: InventoryResource): { allocated?: number; used?: number } {

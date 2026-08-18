@@ -121,7 +121,7 @@ function ovirtFetchMock() {
       return jsonResponse({ cluster: [{ id: "cluster-1", name: "Default", version: { major: 4, minor: 5 } }] });
     }
     if (resource === "hosts") {
-      return jsonResponse({ host: [{ id: "host-1", name: "host-1", status: "up" }] });
+      return jsonResponse({ host: [{ id: "host-1", name: "host-1", status: "up", certificate: { content: "certificate-content-must-not-persist" } }] });
     }
     if (resource === "vms" && page === "1") {
       return jsonResponse({ vm: Array.from({ length: 1000 }, (_, index) => ({ id: `vm-${index}`, name: `vm-${index}` })) });
@@ -239,6 +239,7 @@ describe("oVirt backend collector", () => {
     expect(snapshot.apiVersion).toBe("4.5");
     expect(snapshot.resources.vms).toHaveLength(1001);
     expect(snapshot.resources.hosts[0]).toMatchObject({ name: "host-1" });
+    expect(snapshot.resources.hosts[0]).not.toHaveProperty("certificate");
     expect(fetchMock.mock.calls.slice(1).every(([, init]) => init?.method === "GET")).toBe(true);
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
       "Content-Type": "application/x-www-form-urlencoded"

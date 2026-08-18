@@ -38,6 +38,7 @@
 - Browser tests should cover login, dashboard KPIs, server-side inventory filtering, saved views, deep links, VM detail tabs, manual collection, history, and export downloads.
 - Metrics validation must prove inventory state and time-series metrics remain separated, and that dashboards use P95 CPU/memory where required.
 - Manual lab validation should confirm collection from `https://lab111/ovirt-engine/` with redacted evidence. Do not store passwords, bearer tokens, or authorization headers in artifacts.
+- Before a release, run `npm audit --audit-level=high`. Record any unresolved moderate-or-higher dependency advisories in `TODO.md`; never use `npm audit fix --force` without reviewing the affected feature and its focused regression tests.
 
 ## Workflow
 
@@ -54,3 +55,4 @@
 11. Use server-side filtering and pagination for large inventories. Avoid client-only filtering for operational datasets.
 12. Keep exports and logs redacted. No credential, token, or password-grant request body may appear in snapshots, exports, browser storage, logs, tests, or docs.
 13. For release, tag, image, and push work, use `origin` pointing at `https://github.com/dennis-au/ovirt_stocktake.git`; do not push to legacy `dennis-au/ovirt_inventory` or `dennis-au/ovirt-inventory` remotes unless explicitly requested.
+14. Build every operational table inside the shared `.table-scroll` wrapper with `.data-table`. Tables must retain readable columns using intrinsic sizing and page-appropriate minimum widths; narrow containers must scroll horizontally rather than compressing headers, status pills, dates, or values into overlapping text. Do not use `table-layout: fixed` merely to force a wide table into its container. Validate each new or changed table at 320px, 768px, 1024px, and 1440px: no page-level horizontal overflow, no text overlap, and a usable table scrollbar when the table is wider than its container.

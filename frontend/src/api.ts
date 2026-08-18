@@ -186,6 +186,46 @@ export interface SnapshotVmInventoryResponse {
   };
 }
 
+export interface SnapshotHostInventoryRow {
+  managerId: string;
+  managerName: string;
+  snapshotId: string;
+  collectedAt: string;
+  clusterId?: string;
+  clusterName?: string;
+  hostId: string;
+  hostName: string;
+  status?: string;
+  hostOs?: string;
+  vdsmVersion?: string;
+  certificateExpiresAt?: string;
+  physicalCpuThreads?: number;
+  physicalMemoryMiB?: number;
+  hostedVmCount: number;
+  allocatedVcpu?: number;
+  allocatedRamMiB?: number;
+}
+
+export interface SnapshotHostInventoryResponse {
+  rows: SnapshotHostInventoryRow[];
+  page: number;
+  pageSize: number;
+  total: number;
+  filters: SnapshotHostInventoryFilters;
+  filterOptions: {
+    managers: Array<{ value: string; label: string }>;
+    clusters: Array<{ value: string; label: string }>;
+  };
+}
+
+export interface SnapshotHostInventoryFilters {
+  search?: string;
+  managerId?: string;
+  clusterId?: string;
+  page?: number;
+  pageSize?: number;
+}
+
 export interface SnapshotVmInventoryFilters {
   search?: string;
   managerId?: string;
@@ -442,6 +482,15 @@ export async function getSnapshotVmInventory(filters: SnapshotVmInventoryFilters
   const body = (await response.json().catch(() => undefined)) as { inventory?: SnapshotVmInventoryResponse; error?: string } | undefined;
   if (!response.ok || !body?.inventory) {
     throw new Error(body?.error ?? `Inventory request failed with HTTP ${response.status}`);
+  }
+  return body.inventory;
+}
+
+export async function getSnapshotHostInventory(filters: SnapshotHostInventoryFilters = {}): Promise<SnapshotHostInventoryResponse> {
+  const response = await fetch(`/api/inventory/snapshot-hosts${queryString(filters)}`);
+  const body = (await response.json().catch(() => undefined)) as { inventory?: SnapshotHostInventoryResponse; error?: string } | undefined;
+  if (!response.ok || !body?.inventory) {
+    throw new Error(body?.error ?? `Hardware inventory request failed with HTTP ${response.status}`);
   }
   return body.inventory;
 }

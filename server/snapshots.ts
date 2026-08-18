@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { currentSession } from "./auth.js";
 import { recordAudit } from "./audit.js";
 import type { SqliteDatabase } from "./db.js";
+import { withoutHostCertificateContent } from "./host-certificate.js";
 import type { AppRole } from "./rbac.js";
 import { redactInventoryResources, requireRole, roles } from "./rbac.js";
 import { resourceKeys, type CollectionIssue, type InventoryResources, type SnapshotPayload, type SnapshotStatus } from "../shared/snapshot.js";
@@ -96,6 +97,7 @@ export function saveSnapshotPayload(db: SqliteDatabase, payload: SnapshotPayload
     throw new Error(parsed.error);
   }
 
+  const resources = sanitizeSnapshotResources(parsed.value.resources);
   const id = randomUUID();
   db.prepare(
     `INSERT INTO snapshots
@@ -110,7 +112,7 @@ export function saveSnapshotPayload(db: SqliteDatabase, payload: SnapshotPayload
     parsed.value.apiVersion,
     parsed.value.durationMs,
     parsed.value.status,
-    JSON.stringify(parsed.value.resources),
+    JSON.stringify(resources),
     JSON.stringify(parsed.value.warnings),
     JSON.stringify(parsed.value.errors)
   );
@@ -174,9 +176,16 @@ function snapshotSummary(row: SnapshotRecord): SnapshotSummary {
 function snapshotDetail(row: SnapshotRecord): SnapshotDetail {
   return {
     ...snapshotSummary(row),
-    resources: JSON.parse(row.resources_json) as InventoryResources,
+    resources: sanitizeSnapshotResources(JSON.parse(row.resources_json) as InventoryResources),
     warnings: JSON.parse(row.warnings_json) as CollectionIssue[],
     errors: JSON.parse(row.errors_json) as CollectionIssue[]
+  };
+}
+
+function sanitizeSnapshotResources(resources: InventoryResources): InventoryResources {
+  return {
+    ...resources,
+    hosts: resources.hosts.map(withoutHostCertificateContent)
   };
 }
 
