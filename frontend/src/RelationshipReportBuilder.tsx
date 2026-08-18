@@ -26,6 +26,14 @@ interface ClusterOption {
   storageDomainCount: number;
 }
 
+interface HostOption {
+  id: string;
+  name: string;
+  managerId: string;
+  clusterId: string;
+  vmCount: number;
+}
+
 const relationshipExportColumns = [
   "hostName",
   "vmName",
@@ -43,23 +51,31 @@ export function RelationshipReportBuilder({ error, loading, relationships, onRef
   const managers = useMemo(() => managerOptions(rows), [rows]);
   const [selectedManagerId, setSelectedManagerId] = useState("");
   const [selectedClusterId, setSelectedClusterId] = useState("");
+  const [selectedHostId, setSelectedHostId] = useState("");
   const [draggingLabel, setDraggingLabel] = useState("");
 
   const selectedManager = managers.find((manager) => manager.id === selectedManagerId);
   const clusters = useMemo(() => clusterOptions(rows, selectedManagerId), [rows, selectedManagerId]);
   const selectedCluster = clusters.find((cluster) => cluster.id === selectedClusterId);
-  const vmRows = useMemo(
+  const clusterVmRows = useMemo(
     () => rows.filter((row) => row.managerId === selectedManagerId && row.clusterId === selectedClusterId && row.vmId),
     [rows, selectedClusterId, selectedManagerId]
   );
-  const selectedStorageDomains = useMemo(
-    () => uniqueNames(vmRows.flatMap((row) => relationshipStorageDomainNames(row))),
-    [vmRows]
+  const hosts = useMemo(() => hostOptions(clusterVmRows), [clusterVmRows]);
+  const selectedHost = hosts.find((host) => host.id === selectedHostId);
+  const vmRows = useMemo(
+    () => (selectedHostId ? clusterVmRows.filter((row) => row.hostId === selectedHostId) : clusterVmRows),
+    [clusterVmRows, selectedHostId]
+  );
+  const clusterStorageDomains = useMemo(
+    () => uniqueNames(clusterVmRows.flatMap((row) => relationshipStorageDomainNames(row))),
+    [clusterVmRows]
   );
 
   function resetSelection() {
     setSelectedManagerId("");
     setSelectedClusterId("");
+    setSelectedHostId("");
   }
 
   function handleManagerDrop(event: DragEvent<HTMLDivElement>) {
@@ -70,6 +86,7 @@ export function RelationshipReportBuilder({ error, loading, relationships, onRef
     }
     setSelectedManagerId(managerId);
     setSelectedClusterId("");
+    setSelectedHostId("");
     setDraggingLabel("");
   }
 
@@ -81,6 +98,19 @@ export function RelationshipReportBuilder({ error, loading, relationships, onRef
       return;
     }
     setSelectedClusterId(clusterId);
+    setSelectedHostId("");
+    setDraggingLabel("");
+  }
+
+  function handleHostDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const hostId = event.dataTransfer.getData("application/x-relationship-host");
+    const clusterId = event.dataTransfer.getData("application/x-relationship-cluster");
+    const managerId = event.dataTransfer.getData("application/x-relationship-manager");
+    if (!hostId || clusterId !== selectedClusterId || managerId !== selectedManagerId) {
+      return;
+    }
+    setSelectedHostId(hostId);
     setDraggingLabel("");
   }
 
@@ -99,7 +129,14 @@ export function RelationshipReportBuilder({ error, loading, relationships, onRef
             <RefreshCw aria-hidden="true" size={16} />
             {loading ? "Refreshing" : "Refresh"}
           </button>
-          <a className="button secondary" href={relationshipsExportUrl([...relationshipExportColumns])}>
+          <a
+            className="button secondary"
+            href={relationshipsExportUrl([...relationshipExportColumns], {
+              managerId: selectedManager?.id,
+              clusterId: selectedCluster?.id,
+              hostId: selectedHost?.id
+            })}
+          >
             <Download aria-hidden="true" size={16} />
             Export CSV
           </a>
@@ -129,6 +166,7 @@ export function RelationshipReportBuilder({ error, loading, relationships, onRef
                 onClick={() => {
                   setSelectedManagerId(manager.id);
                   setSelectedClusterId("");
+                  setSelectedHostId("");
                 }}
                 onDragEnd={() => setDraggingLabel("")}
                 onDragStart={(event) => {
@@ -180,7 +218,10 @@ export function RelationshipReportBuilder({ error, loading, relationships, onRef
                     draggable
                     key={cluster.id}
                     type="button"
-                    onClick={() => setSelectedClusterId(cluster.id)}
+                    onClick={() => {
+                      setSelectedClusterId(cluster.id);
+                      setSelectedHostId("");
+                    }}
                     onDragEnd={() => setDraggingLabel("")}
                     onDragStart={(event) => {
                       event.dataTransfer.setData("application/x-relationship-manager", cluster.managerId);
@@ -213,10 +254,74 @@ export function RelationshipReportBuilder({ error, loading, relationships, onRef
                 <h3>{selectedCluster ? selectedCluster.name : "Drop Cluster"}</h3>
                 <p>
                   {selectedCluster
-                    ? `${vmRows.length} VMs, ${selectedStorageDomains.length} storage domains from ${selectedCluster.name}`
+                    ? `${clusterVmRows.length} VMs, ${clusterStorageDomains.length} storage domains from ${selectedCluster.name}`
                     : "Drag a cluster here to show related VMs."}
                 </p>
               </div>
+            </div>
+          )}
+
+          {selectedCluster && (
+            <section className="relationship-step-panel" aria-labelledby="relationship-hosts-title">
+              <div className="relationship-panel-heading">
+                <Server aria-hidden="true" size={17} />
+                <h3 id="relationship-hosts-title">Hosts Under {selectedCluster.name}</h3>
+              </div>
+              <div className="relationship-draggable-list cluster-list">
+                {hosts.map((host) => (
+                  <button
+                    aria-pressed={host.id === selectedHostId}
+                    className="relationship-draggable"
+                    draggable
+                    key={host.id}
+                    type="button"
+                    onClick={() => setSelectedHostId(host.id)}
+                    onDragEnd={() => setDraggingLabel("")}
+                    onDragStart={(event) => {
+                      event.dataTransfer.setData("application/x-relationship-manager", host.managerId);
+                      event.dataTransfer.setData("application/x-relationship-cluster", host.clusterId);
+                      event.dataTransfer.setData("application/x-relationship-host", host.id);
+                      setDraggingLabel(host.name);
+                    }}
+                  >
+                    <GripVertical aria-hidden="true" size={15} />
+                    <span>
+                      <strong>{host.name}</strong>
+                      <small>{host.vmCount} VMs</small>
+                    </span>
+                  </button>
+                ))}
+                {!hosts.length && <p className="empty-state">No hosts found for this cluster</p>}
+              </div>
+            </section>
+          )}
+
+          {selectedCluster && (
+            <div
+              className={`relationship-drop-zone host-target ${selectedHost ? "has-selection" : ""}`}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={handleHostDrop}
+            >
+              <Server aria-hidden="true" size={18} />
+              <div>
+                <h3>{selectedHost ? selectedHost.name : "All Hosts"}</h3>
+                <p>
+                  {selectedHost
+                    ? `${vmRows.length} VMs from ${selectedHost.name}`
+                    : `${clusterVmRows.length} VMs across all hosts. Host selection is optional.`}
+                </p>
+              </div>
+              {selectedHost && (
+                <button
+                  className="icon-button"
+                  type="button"
+                  onClick={() => setSelectedHostId("")}
+                  title="Show all hosts"
+                  aria-label="Show all hosts"
+                >
+                  <RotateCcw aria-hidden="true" size={16} />
+                </button>
+              )}
             </div>
           )}
 
@@ -227,6 +332,7 @@ export function RelationshipReportBuilder({ error, loading, relationships, onRef
                 <div className="table-hint relationship-table-context">
                   <span>Manager: {selectedManager?.name}</span>
                   <span>Cluster: {selectedCluster.name}</span>
+                  {selectedHost && <span>Host: {selectedHost.name}</span>}
                   {vmRows[0]?.collectedAt && <span>Collected At: {new Date(vmRows[0].collectedAt).toLocaleString()}</span>}
                 </div>
               </div>
@@ -333,6 +439,25 @@ function clusterOptions(rows: RelationshipRow[], managerId: string): ClusterOpti
     clusters.set(row.clusterId, cluster);
   }
   return [...clusters.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function hostOptions(rows: RelationshipRow[]): HostOption[] {
+  const hosts = new Map<string, HostOption>();
+  for (const row of rows) {
+    if (!row.hostId || !row.clusterId) {
+      continue;
+    }
+    const host = hosts.get(row.hostId) ?? {
+      id: row.hostId,
+      name: row.hostName ?? row.hostId,
+      managerId: row.managerId,
+      clusterId: row.clusterId,
+      vmCount: 0
+    };
+    host.vmCount += row.vmId ? 1 : 0;
+    hosts.set(row.hostId, host);
+  }
+  return [...hosts.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
 function formatStorageDomains(names: string[]): string {

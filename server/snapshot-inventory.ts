@@ -169,6 +169,12 @@ export interface RelationshipResult {
   total: number;
 }
 
+interface RelationshipExportScope {
+  managerId?: string;
+  clusterId?: string;
+  hostId?: string;
+}
+
 const inventoryColumns: Array<{ key: keyof SnapshotVmInventoryRow; title: string; format?: (row: SnapshotVmInventoryRow) => unknown }> = [
   { key: "managerName", title: "Manager" },
   { key: "clusterName", title: "Cluster" },
@@ -237,19 +243,20 @@ export function registerSnapshotInventoryRoutes(app: FastifyInstance, db: Sqlite
   });
 
   app.get("/api/exports/relationships", { preHandler: requireRole(roles.read) }, async (request, reply) => {
-    const relationships = queryRelationships(db);
+    const scope = parseRelationshipExportScope(request.query);
+    const rows = queryRelationships(db).rows.filter((row) => matchesRelationshipExportScope(row, scope));
     const columns = parseRelationshipColumns(request.query);
     const session = currentSession(db, request);
     recordAudit(db, {
       actor: session?.username,
       action: "export.relationships",
-      metadata: { rows: relationships.rows.length, columns: columns.map((column) => column.key) }
+      metadata: { rows: rows.length, columns: columns.map((column) => column.key), scope }
     });
 
     return reply
       .header("Content-Type", "text/csv; charset=utf-8")
-      .header("Content-Disposition", "attachment; filename=\"ovirt-inventory-relationships.csv\"")
-      .send(relationshipsCsv(relationships.rows, columns));
+      .header("Content-Disposition", `attachment; filename="${relationshipExportFilename(rows, scope)}"`)
+      .send(relationshipsCsv(rows, columns));
   });
 }
 
@@ -669,6 +676,62 @@ function parseRelationshipColumns(query: unknown): RelationshipColumn[] {
     }
   }
   return requested.length ? requested : defaultRelationshipColumns;
+}
+
+function parseRelationshipExportScope(query: unknown): RelationshipExportScope {
+  const raw = query && typeof query === "object" ? (query as Record<string, unknown>) : {};
+  return {
+    managerId: stringValue(raw.managerId),
+    clusterId: stringValue(raw.clusterId),
+    hostId: stringValue(raw.hostId)
+  };
+}
+
+function matchesRelationshipExportScope(row: RelationshipRow, scope: RelationshipExportScope): boolean {
+  return (
+    (!scope.managerId || row.managerId === scope.managerId) &&
+    (!scope.clusterId || row.clusterId === scope.clusterId) &&
+    (!scope.hostId || row.hostId === scope.hostId)
+  );
+}
+
+function relationshipExportFilename(rows: RelationshipRow[], scope: RelationshipExportScope): string {
+  if (!scope.managerId && !scope.clusterId && !scope.hostId) {
+    return "ovirt-inventory-topology.csv";
+  }
+
+  const row = rows[0];
+  const parts = ["ovirt-inventory", "topology"];
+  if (scope.managerId) {
+    parts.push(filenameSlug(row?.managerName) || filenameSlug(scope.managerId) || "manager");
+  }
+  if (scope.clusterId) {
+    parts.push(filenameSlug(row?.clusterName) || filenameSlug(scope.clusterId) || "cluster");
+  }
+  if (scope.hostId) {
+    parts.push(filenameSlug(row?.hostName) || filenameSlug(scope.hostId) || "host");
+  }
+  const collectedDate = relationshipCollectedDate(row?.collectedAt);
+  if (collectedDate) {
+    parts.push(collectedDate);
+  }
+  return `${parts.join("-")}.csv`;
+}
+
+function filenameSlug(value: string | undefined): string {
+  return (value ?? "")
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function relationshipCollectedDate(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? undefined : new Date(timestamp).toISOString().slice(0, 10);
 }
 
 function relationshipsCsv(rows: RelationshipRow[], columns: RelationshipColumn[] = defaultRelationshipColumns): string {

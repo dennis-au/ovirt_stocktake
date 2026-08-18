@@ -1280,7 +1280,8 @@ select:focus {
 }
 
 .relationship-draggable:hover,
-.relationship-draggable:focus-visible {
+.relationship-draggable:focus-visible,
+.relationship-draggable[aria-pressed="true"] {
   border-color: rgba(0, 112, 74, 0.28);
   background: var(--secondary);
   outline: none;

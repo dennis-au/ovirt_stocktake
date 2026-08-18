@@ -325,6 +325,7 @@ describe("snapshot-backed VM inventory", () => {
     const csv = await app.inject({ method: "GET", url: "/api/exports/relationships", cookies: cookie });
     expect(csv.statusCode).toBe(200);
     expect(csv.headers["content-type"]).toContain("text/csv");
+    expect(csv.headers["content-disposition"]).toBe('attachment; filename="ovirt-inventory-topology.csv"');
     expect(csv.body.split("\n")[0]).toBe("Host,VM,Power State,IP Addresses,vCPU Count,Allocated RAM,Virtual Disks,Storage Domains");
     expect(csv.body).toContain(
       'node-01,api-01,up,10.0.0.10; 10.0.0.11; 10.0.0.12,4,"8,192 MiB (~8 GiB)",os-disk (10 GiB); data-01 (20 GiB),data'
@@ -342,6 +343,24 @@ describe("snapshot-backed VM inventory", () => {
     expect(customCsv.body).toContain("api-01,data,node-01,lab");
     expect(customCsv.body).toContain("web-10,-,node-01,lab");
 
+    const otherManagerId = await createManager(app, cookie, "other");
+    const otherSnapshot = snapshot(otherManagerId, "other");
+    otherSnapshot.resources.vms[0]!.name = "other-api";
+    await app.inject({ method: "POST", url: "/api/snapshots", cookies: cookie, payload: otherSnapshot });
+
+    const scopedCsv = await app.inject({
+      method: "GET",
+      url: `/api/exports/relationships?managerId=${managerId}&clusterId=cluster-1`,
+      cookies: cookie
+    });
+    expect(scopedCsv.statusCode).toBe(200);
+    expect(scopedCsv.headers["content-disposition"]).toBe(
+      'attachment; filename="ovirt-inventory-topology-lab-default-2026-08-12.csv"'
+    );
+    expect(scopedCsv.body).toContain("api-01");
+    expect(scopedCsv.body).toContain("web-10");
+    expect(scopedCsv.body).not.toContain("other-api");
+
     const fallbackCsv = await app.inject({
       method: "GET",
       url: "/api/exports/relationships?columns=password,token",
@@ -352,6 +371,47 @@ describe("snapshot-backed VM inventory", () => {
       "Host,VM,Power State,IP Addresses,vCPU Count,Allocated RAM,Virtual Disks,Storage Domains"
     );
     expect(fallbackCsv.body).not.toContain("manager-password");
+    await app.close();
+  });
+
+  it("exports every cluster VM until an optional host scope is selected", async () => {
+    const { app, cookie } = await authenticatedApp();
+    const managerId = await createManager(app, cookie, "lab");
+    const payload = snapshot(managerId, "lab");
+    payload.resources.hosts.push({ id: "host-2", name: "node-02", cluster: { id: "cluster-1" }, status: "up" });
+    payload.resources.vms.push({
+      id: "vm-3",
+      name: "worker-01",
+      status: "up",
+      cluster: { id: "cluster-1", name: "Default" },
+      host: { id: "host-2", name: "node-02" },
+      cpu: { topology: { sockets: 1, cores: 2, threads: 1 } },
+      memory: 4294967296
+    });
+    await app.inject({ method: "POST", url: "/api/snapshots", cookies: cookie, payload });
+
+    const clusterCsv = await app.inject({
+      method: "GET",
+      url: `/api/exports/relationships?managerId=${managerId}&clusterId=cluster-1`,
+      cookies: cookie
+    });
+    expect(clusterCsv.statusCode).toBe(200);
+    expect(clusterCsv.body).toContain("api-01");
+    expect(clusterCsv.body).toContain("web-10");
+    expect(clusterCsv.body).toContain("worker-01");
+
+    const hostCsv = await app.inject({
+      method: "GET",
+      url: `/api/exports/relationships?managerId=${managerId}&clusterId=cluster-1&hostId=host-2`,
+      cookies: cookie
+    });
+    expect(hostCsv.statusCode).toBe(200);
+    expect(hostCsv.headers["content-disposition"]).toBe(
+      'attachment; filename="ovirt-inventory-topology-lab-default-node-02-2026-08-12.csv"'
+    );
+    expect(hostCsv.body).toContain("worker-01");
+    expect(hostCsv.body).not.toContain("api-01");
+    expect(hostCsv.body).not.toContain("web-10");
     await app.close();
   });
 });

@@ -286,6 +286,12 @@ export interface RelationshipResponse {
 
 export type RelationshipColumnKey = keyof RelationshipRow;
 
+export interface RelationshipExportScope {
+  managerId?: string;
+  clusterId?: string;
+  hostId?: string;
+}
+
 export interface SavedView {
   id: string;
   ownerUsername: string;
@@ -518,8 +524,8 @@ export async function getRelationships(): Promise<RelationshipResponse> {
   return body.relationships;
 }
 
-export function relationshipsExportUrl(columns?: RelationshipColumnKey[]): string {
-  return `/api/exports/relationships${queryString({ columns: columns?.join(",") })}`;
+export function relationshipsExportUrl(columns?: RelationshipColumnKey[], scope: RelationshipExportScope = {}): string {
+  return `/api/exports/relationships${queryString({ columns: columns?.join(","), ...scope })}`;
 }
 
 export async function listSavedViews(scope: string): Promise<SavedView[]> {
