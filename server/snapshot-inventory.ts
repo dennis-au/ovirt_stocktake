@@ -120,7 +120,17 @@ export interface RelationshipRow {
   hostName?: string;
   vmId?: string;
   vmName?: string;
+  powerState?: string;
+  ipAddresses: string[];
+  vcpuCount?: number;
+  allocatedRamMiB?: number;
+  virtualDisks: RelationshipVirtualDisk[];
   storageDomainNames: string[];
+}
+
+export interface RelationshipVirtualDisk {
+  name: string;
+  sizeGiB?: number;
 }
 
 type SnapshotVmInventorySortKey =
@@ -463,6 +473,11 @@ function relationshipRows(manager: ManagerRow, snapshot: SnapshotRow): Relations
       hostName: refName(vm.host) ?? stringValue(host?.name) ?? hostId,
       vmId,
       vmName: stringValue(vm.name) ?? vmId,
+      powerState: stringValue(vm.status),
+      ipAddresses: vmIpAddresses(vm),
+      vcpuCount: vcpuCount(vm),
+      allocatedRamMiB: allocatedRamMiB(vm),
+      virtualDisks: vmVirtualDisks(vm, disks),
       storageDomainNames: vmStorageDomainNames(vm, disks, storageDomains)
     });
   }
@@ -484,6 +499,8 @@ function relationshipRows(manager: ManagerRow, snapshot: SnapshotRow): Relations
       clusterName: refName(host.cluster) ?? stringValue(cluster?.name) ?? clusterId,
       hostId,
       hostName: stringValue(host.name) ?? hostId,
+      ipAddresses: [],
+      virtualDisks: [],
       storageDomainNames: []
     });
   }
@@ -495,6 +512,8 @@ function relationshipRows(manager: ManagerRow, snapshot: SnapshotRow): Relations
       managerUrl: manager.url,
       snapshotId: snapshot.id,
       collectedAt: snapshot.collected_at,
+      ipAddresses: [],
+      virtualDisks: [],
       storageDomainNames: []
     });
   }
@@ -611,11 +630,16 @@ function snapshotVmInventoryCsv(rows: SnapshotVmInventoryRow[]): string {
 }
 
 const relationshipColumns = [
-  { key: "managerName", title: "Manager" },
-  { key: "clusterName", title: "Cluster" },
   { key: "hostName", title: "Host" },
   { key: "vmName", title: "VM" },
+  { key: "powerState", title: "Power State" },
+  { key: "ipAddresses", title: "IP Addresses", format: (row) => formatNameList(row.ipAddresses) },
+  { key: "vcpuCount", title: "vCPU Count" },
+  { key: "allocatedRamMiB", title: "Allocated RAM", format: (row) => formatMemory(row.allocatedRamMiB) },
+  { key: "virtualDisks", title: "Virtual Disks", format: (row) => formatVirtualDisks(row.virtualDisks) },
   { key: "storageDomainNames", title: "Storage Domains", format: (row) => formatNameList(row.storageDomainNames) },
+  { key: "managerName", title: "Manager" },
+  { key: "clusterName", title: "Cluster" },
   { key: "collectedAt", title: "Collected At" },
   { key: "managerId", title: "Manager ID" },
   { key: "clusterId", title: "Cluster ID" },
@@ -627,7 +651,7 @@ const relationshipColumns = [
 
 type RelationshipColumn = (typeof relationshipColumns)[number];
 
-const defaultRelationshipColumns = relationshipColumns.slice(0, 6);
+const defaultRelationshipColumns = relationshipColumns.slice(0, 8);
 
 function parseRelationshipColumns(query: unknown): RelationshipColumn[] {
   const raw = query && typeof query === "object" ? stringValue((query as Record<string, unknown>).columns) : undefined;
@@ -795,6 +819,32 @@ function vmStorageDomainNames(
     }
   }
   return uniqueOrderedStrings(names);
+}
+
+function vmVirtualDisks(vm: InventoryResource, disksById: Map<string, InventoryResource>): RelationshipVirtualDisk[] {
+  return childItems(vm.disk_attachments ?? vm.diskAttachments, "disk_attachment").map((attachment) => {
+    const embeddedDisk = recordValue(attachment.disk) ?? attachment;
+    const diskId = stringValue(embeddedDisk.id ?? embeddedDisk.diskId ?? attachment.disk_id ?? attachment.diskId);
+    const relatedDisk = diskId ? disksById.get(diskId) : undefined;
+    return {
+      name:
+        stringValue(embeddedDisk.alias) ??
+        stringValue(embeddedDisk.name) ??
+        stringValue(relatedDisk?.alias) ??
+        stringValue(relatedDisk?.name) ??
+        diskId ??
+        "Unknown disk",
+      sizeGiB: provisionedSizeGiB(embeddedDisk) ?? provisionedSizeGiB(relatedDisk)
+    };
+  });
+}
+
+function provisionedSizeGiB(disk: InventoryResource | undefined): number | undefined {
+  if (!disk) {
+    return undefined;
+  }
+  const direct = numberValue(disk.provisionedSizeGib ?? disk.provisionedSizeGiB ?? disk.provisioned_size_gib);
+  return direct === undefined ? bytesToGiB(disk.provisioned_size) : roundGib(direct);
 }
 
 function diskStorageDomainNames(disk: InventoryResource, storageDomainsById: Map<string, InventoryResource>): string[] {
@@ -1013,6 +1063,12 @@ function formatSnapshotNames(value: string[]): string {
 
 function formatNameList(value: string[]): string {
   return value.length ? value.join("; ") : "-";
+}
+
+function formatVirtualDisks(value: RelationshipVirtualDisk[]): string {
+  return value.length
+    ? value.map((disk) => (disk.sizeGiB === undefined ? disk.name : `${disk.name} (${formatRoundedGib(disk.sizeGiB)} GiB)`)).join("; ")
+    : "-";
 }
 
 function resourceMapById(items: InventoryResource[], keys: string[]): Map<string, InventoryResource> {

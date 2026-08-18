@@ -1680,7 +1680,7 @@ select:focus {
 }
 
 .cluster-vm-disk-size {
-  color: var(--muted);
+  color: var(--muted-foreground);
   white-space: nowrap;
 }
 
@@ -1710,7 +1710,18 @@ select:focus {
 }
 
 .relationship-data-table {
-  min-width: 940px;
+  min-width: 1240px;
+}
+
+.relationship-table-context {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 12px;
+}
+
+.relationship-table-context span {
+  white-space: nowrap;
 }
 
 .data-table th,

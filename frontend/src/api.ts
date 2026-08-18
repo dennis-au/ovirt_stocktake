@@ -266,7 +266,17 @@ export interface RelationshipRow {
   hostName?: string;
   vmId?: string;
   vmName?: string;
+  powerState?: string;
+  ipAddresses: string[];
+  vcpuCount?: number;
+  allocatedRamMiB?: number;
+  virtualDisks: RelationshipVirtualDisk[];
   storageDomainNames: string[];
+}
+
+export interface RelationshipVirtualDisk {
+  name: string;
+  sizeGiB?: number;
 }
 
 export interface RelationshipResponse {

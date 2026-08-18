@@ -18,7 +18,7 @@ Supported platforms:
 Release image:
 
 ```bash
-docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.20
+docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.21
 ```
 
 ## Quick Start With Docker Compose
@@ -46,12 +46,12 @@ To use a different published image, set `OVIRT_INVENTORY_IMAGE` in `.env`. For e
 
 ## Downloadable Compose Bundle
 
-Each GitHub release includes an `ovirt-inventory-compose-v0.1.20.tar.gz` deployment bundle containing `compose.yaml`, empty `inventory_data/` and `postgres_data/` folders, `.env.example`, `setup.sh`, and this README. Download, extract, generate the editable `.env`, then start the app:
+Each GitHub release includes an `ovirt-inventory-compose-v0.1.21.tar.gz` deployment bundle containing `compose.yaml`, empty `inventory_data/` and `postgres_data/` folders, `.env.example`, `setup.sh`, and this README. Download, extract, generate the editable `.env`, then start the app:
 
 ```bash
-curl -LO https://github.com/dennis-au/ovirt_stocktake/releases/download/v0.1.20/ovirt-inventory-compose-v0.1.20.tar.gz
-tar -xzf ovirt-inventory-compose-v0.1.20.tar.gz
-cd ovirt-inventory-compose-v0.1.20
+curl -LO https://github.com/dennis-au/ovirt_stocktake/releases/download/v0.1.21/ovirt-inventory-compose-v0.1.21.tar.gz
+tar -xzf ovirt-inventory-compose-v0.1.21.tar.gz
+cd ovirt-inventory-compose-v0.1.21
 ./setup.sh
 # Optionally edit .env, for example to change the host port.
 docker compose pull

@@ -26,7 +26,16 @@ interface ClusterOption {
   storageDomainCount: number;
 }
 
-const relationshipExportColumns = ["managerName", "clusterName", "hostName", "vmName", "storageDomainNames", "collectedAt"] as const;
+const relationshipExportColumns = [
+  "hostName",
+  "vmName",
+  "powerState",
+  "ipAddresses",
+  "vcpuCount",
+  "allocatedRamMiB",
+  "virtualDisks",
+  "storageDomainNames"
+] as const;
 const emptyRelationshipRows: RelationshipRow[] = [];
 
 export function RelationshipReportBuilder({ error, loading, relationships, onRefresh }: RelationshipReportBuilderProps) {
@@ -215,36 +224,55 @@ export function RelationshipReportBuilder({ error, loading, relationships, onRef
             <section className="table-card relationship-table-card" aria-labelledby="relationship-vm-table-title">
               <div className="table-title">
                 <h3 id="relationship-vm-table-title">Related VMs</h3>
-                <span className="table-hint">
-                  {selectedManager?.name} / {selectedCluster.name}
-                </span>
+                <div className="table-hint relationship-table-context">
+                  <span>Manager: {selectedManager?.name}</span>
+                  <span>Cluster: {selectedCluster.name}</span>
+                  {vmRows[0]?.collectedAt && <span>Collected At: {new Date(vmRows[0].collectedAt).toLocaleString()}</span>}
+                </div>
               </div>
               <div className="table-scroll relationship-table-scroll">
                 <table className="data-table relationship-data-table">
                   <thead>
                     <tr>
-                      <th scope="col">VM</th>
                       <th scope="col">Host</th>
+                      <th scope="col">VM</th>
+                      <th scope="col">Power State</th>
+                      <th scope="col">IP Address</th>
+                      <th scope="col">vCPU Count</th>
+                      <th scope="col">Allocated RAM</th>
+                      <th scope="col">Virtual Disks</th>
                       <th scope="col">Storage Domains</th>
-                      <th scope="col">Cluster</th>
-                      <th scope="col">Manager</th>
-                      <th scope="col">Collected At</th>
                     </tr>
                   </thead>
                   <tbody>
                     {vmRows.map((row) => (
                       <tr key={`${row.managerId}:${row.clusterId}:${row.hostId}:${row.vmId}:${row.snapshotId}`}>
-                        <td>{row.vmName ?? row.vmId}</td>
                         <td>{row.hostName ?? row.hostId ?? "-"}</td>
+                        <td>{row.vmName ?? row.vmId}</td>
+                        <td>{row.powerState ?? "-"}</td>
+                        <td>{formatIpAddresses(row)}</td>
+                        <td>{row.vcpuCount ?? "-"}</td>
+                        <td>{formatMemory(row.allocatedRamMiB)}</td>
+                        <td className="cluster-vm-disks-cell">
+                          {row.virtualDisks?.length ? (
+                            <ul className="cluster-vm-disk-list" aria-label={`Virtual disks for ${row.vmName ?? row.vmId}`}>
+                              {row.virtualDisks.map((disk, index) => (
+                                <li key={`${disk.name}-${index}`}>
+                                  <span className="cluster-vm-disk-name">{disk.name}</span>
+                                  <span className="cluster-vm-disk-size">{formatGib(disk.sizeGiB)}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
                         <td>{formatStorageDomains(relationshipStorageDomainNames(row))}</td>
-                        <td>{row.clusterName ?? row.clusterId ?? "-"}</td>
-                        <td>{row.managerName}</td>
-                        <td>{new Date(row.collectedAt).toLocaleString()}</td>
                       </tr>
                     ))}
                     {!vmRows.length && (
                       <tr>
-                        <td className="empty-table-cell" colSpan={6}>
+                        <td className="empty-table-cell" colSpan={8}>
                           No VMs found for this cluster
                         </td>
                       </tr>
@@ -309,6 +337,23 @@ function clusterOptions(rows: RelationshipRow[], managerId: string): ClusterOpti
 
 function formatStorageDomains(names: string[]): string {
   return names.length ? names.join(", ") : "-";
+}
+
+function formatIpAddresses(row: RelationshipRow): string {
+  return row.ipAddresses?.length ? row.ipAddresses.join(", ") : "-";
+}
+
+function formatMemory(value: number | undefined): string {
+  if (value === undefined) {
+    return "-";
+  }
+  const gib = value / 1024;
+  const formattedGib = Number.isInteger(gib) ? gib.toLocaleString() : gib.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  return `${value.toLocaleString()} MiB (~${formattedGib} GiB)`;
+}
+
+function formatGib(value: number | undefined): string {
+  return value === undefined ? "-" : `${value.toLocaleString()} GiB`;
 }
 
 function relationshipStorageDomainNames(row: RelationshipRow): string[] {

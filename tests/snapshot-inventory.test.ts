@@ -110,8 +110,18 @@ function snapshot(managerId: string, managerName: string): SnapshotPayload {
               {
                 disk: {
                   id: "disk-1",
+                  alias: "os-disk",
                   provisioned_size: 10737418240,
                   actual_size: 5368709120,
+                  storage_domains: { storage_domain: [{ id: "sd-1" }] }
+                }
+              },
+              {
+                disk: {
+                  id: "disk-2",
+                  alias: "data-01",
+                  provisioned_size: 21474836480,
+                  actual_size: 10737418240,
                   storage_domains: { storage_domain: [{ id: "sd-1" }] }
                 }
               }
@@ -209,8 +219,8 @@ describe("snapshot-backed VM inventory", () => {
       ipAddresses: ["10.0.0.10", "10.0.0.11", "10.0.0.12"],
       vcpuCount: 4,
       allocatedRamMiB: 8192,
-      storageAllocatedGiB: 10,
-      storageUsedGiB: 5,
+      storageAllocatedGiB: 30,
+      storageUsedGiB: 15,
       snapshotNames: ["before-patch", "pre-upgrade"]
     });
     expect(list.json().inventory.rows[0].snapshotNames).not.toContain("Active VM");
@@ -287,6 +297,14 @@ describe("snapshot-backed VM inventory", () => {
         clusterName: "Default",
         hostName: "node-01",
         vmName: "api-01",
+        powerState: "up",
+        ipAddresses: ["10.0.0.10", "10.0.0.11", "10.0.0.12"],
+        vcpuCount: 4,
+        allocatedRamMiB: 8192,
+        virtualDisks: [
+          { name: "os-disk", sizeGiB: 10 },
+          { name: "data-01", sizeGiB: 20 }
+        ],
         storageDomainNames: ["data"]
       }),
       expect.objectContaining({
@@ -294,6 +312,11 @@ describe("snapshot-backed VM inventory", () => {
         clusterName: "Default",
         hostName: "node-01",
         vmName: "web-10",
+        powerState: "down",
+        ipAddresses: ["10.0.0.20"],
+        vcpuCount: 1,
+        allocatedRamMiB: 4100,
+        virtualDisks: [],
         storageDomainNames: []
       })
     ]);
@@ -302,9 +325,11 @@ describe("snapshot-backed VM inventory", () => {
     const csv = await app.inject({ method: "GET", url: "/api/exports/relationships", cookies: cookie });
     expect(csv.statusCode).toBe(200);
     expect(csv.headers["content-type"]).toContain("text/csv");
-    expect(csv.body).toContain("Manager,Cluster,Host,VM,Storage Domains,Collected At");
-    expect(csv.body).toContain("lab,Default,node-01,api-01,data");
-    expect(csv.body).toContain("lab,Default,node-01,web-10,-");
+    expect(csv.body.split("\n")[0]).toBe("Host,VM,Power State,IP Addresses,vCPU Count,Allocated RAM,Virtual Disks,Storage Domains");
+    expect(csv.body).toContain(
+      'node-01,api-01,up,10.0.0.10; 10.0.0.11; 10.0.0.12,4,"8,192 MiB (~8 GiB)",os-disk (10 GiB); data-01 (20 GiB),data'
+    );
+    expect(csv.body).toContain('node-01,web-10,down,10.0.0.20,1,"4,100 MiB (~4 GiB)",-,-');
     expect(csv.body).not.toContain("manager-password");
 
     const customCsv = await app.inject({
@@ -323,7 +348,9 @@ describe("snapshot-backed VM inventory", () => {
       cookies: cookie
     });
     expect(fallbackCsv.statusCode).toBe(200);
-    expect(fallbackCsv.body.split("\n")[0]).toBe("Manager,Cluster,Host,VM,Storage Domains,Collected At");
+    expect(fallbackCsv.body.split("\n")[0]).toBe(
+      "Host,VM,Power State,IP Addresses,vCPU Count,Allocated RAM,Virtual Disks,Storage Domains"
+    );
     expect(fallbackCsv.body).not.toContain("manager-password");
     await app.close();
   });
