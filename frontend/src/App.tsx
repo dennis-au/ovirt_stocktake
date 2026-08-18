@@ -47,6 +47,7 @@ import {
   listSnapshots,
   login,
   logout,
+  snapshotHostInventoryExportUrl,
   snapshotVmInventoryExportUrl,
   testManagerCollection,
   updateManager,
@@ -63,6 +64,7 @@ import {
   type ManagerTestCollectionResult,
   type RelationshipResponse,
   type SnapshotDetail,
+  type SnapshotHostInventoryFilters,
   type SnapshotHostInventoryResponse,
   type SnapshotSummary,
   type SnapshotVmInventoryFilters,
@@ -349,15 +351,7 @@ export function App() {
     setInventoryError("");
     try {
       if (view === "hardware") {
-        setHostInventory(
-          await getSnapshotHostInventory({
-            search: filters.search,
-            managerId: filters.managerId,
-            clusterId: filters.clusterId,
-            page: filters.page,
-            pageSize: filters.pageSize
-          })
-        );
+        setHostInventory(await getSnapshotHostInventory(toSnapshotHostInventoryFilters(filters)));
       } else {
         setInventory(await getSnapshotVmInventory(filters));
       }
@@ -683,6 +677,14 @@ export function App() {
   const activeInventoryFilterCount = countActiveInventoryFilters(inventoryFilters, inventoryView);
   const currentInventory = inventoryView === "hardware" ? hostInventory : inventory;
   const inventoryLatestCollectedAt = latestInventoryCollectedAt(currentInventory?.rows);
+  const inventoryCsvExportUrl =
+    inventoryView === "hardware"
+      ? snapshotHostInventoryExportUrl("csv", toSnapshotHostInventoryFilters(inventoryFilters))
+      : snapshotVmInventoryExportUrl("csv", inventoryFilters);
+  const inventoryPdfExportUrl =
+    inventoryView === "hardware"
+      ? snapshotHostInventoryExportUrl("pdf", toSnapshotHostInventoryFilters(inventoryFilters))
+      : snapshotVmInventoryExportUrl("pdf", inventoryFilters);
   const filteredSnapshots = snapshots.filter((snapshot) => matchesSnapshotFilters(snapshot, snapshotFilters));
   const snapshotManagerOptions = uniqueSnapshotManagers(snapshots);
   const snapshotStatusOptions = uniqueSnapshotStatuses(snapshots);
@@ -915,18 +917,14 @@ export function App() {
                     <RefreshCw aria-hidden="true" size={16} />
                     {inventoryLoading ? "Refreshing" : "Refresh"}
                   </button>
-                  {inventoryView === "vms" && (
-                    <>
-                      <a className="button secondary" href={snapshotVmInventoryExportUrl("csv", inventoryFilters)}>
-                        <Download aria-hidden="true" size={16} />
-                        Export CSV
-                      </a>
-                      <a className="button secondary" href={snapshotVmInventoryExportUrl("pdf", inventoryFilters)}>
-                        <Download aria-hidden="true" size={16} />
-                        Export PDF
-                      </a>
-                    </>
-                  )}
+                  <a className="button secondary" href={inventoryCsvExportUrl}>
+                    <Download aria-hidden="true" size={16} />
+                    Export CSV
+                  </a>
+                  <a className="button secondary" href={inventoryPdfExportUrl}>
+                    <Download aria-hidden="true" size={16} />
+                    Export PDF
+                  </a>
                 </div>
               </div>
               <fieldset className="inventory-view-control">
@@ -1796,6 +1794,16 @@ function statusClass(status: SnapshotSummary["status"]) {
 
 function countActiveInventoryFilters(filters: SnapshotVmInventoryFilters, view: InventoryView) {
   return [filters.search, filters.managerId, filters.clusterId, ...(view === "vms" ? [filters.powerState] : [])].filter(Boolean).length;
+}
+
+function toSnapshotHostInventoryFilters(filters: SnapshotVmInventoryFilters): SnapshotHostInventoryFilters {
+  return {
+    search: filters.search,
+    managerId: filters.managerId,
+    clusterId: filters.clusterId,
+    page: filters.page,
+    pageSize: filters.pageSize
+  };
 }
 
 function latestInventoryCollectedAt(rows: Array<{ collectedAt: string }> | undefined) {

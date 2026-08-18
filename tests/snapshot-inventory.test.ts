@@ -196,6 +196,50 @@ describe("snapshot-backed VM inventory", () => {
     await app.close();
   });
 
+  it("exports filtered host hardware inventory as CSV and PDF without secrets", async () => {
+    const { app, cookie } = await authenticatedApp();
+    const labManagerId = await createManager(app, cookie, "lab");
+    const otherManagerId = await createManager(app, cookie, "other");
+    await app.inject({ method: "POST", url: "/api/snapshots", cookies: cookie, payload: snapshot(labManagerId, "lab") });
+    await app.inject({ method: "POST", url: "/api/snapshots", cookies: cookie, payload: snapshot(otherManagerId, "other") });
+
+    const csv = await app.inject({
+      method: "GET",
+      url: `/api/exports/snapshot-hosts?format=csv&managerId=${encodeURIComponent(labManagerId)}&clusterId=cluster-1&search=node-01`,
+      cookies: cookie
+    });
+
+    expect(csv.statusCode).toBe(200);
+    expect(csv.headers["content-type"]).toContain("text/csv");
+    expect(csv.headers["content-disposition"]).toContain("ovirt-inventory-hardware.csv");
+    expect(csv.body.split("\n")[0]).toBe(
+      "Manager,Cluster,Host,Status,Host OS,oVirt/VDSM Version,Certificate Expiry,Physical CPU Threads,Physical RAM,Hosted VMs,Allocated vCPU,Allocated RAM,Collected At"
+    );
+    expect(csv.body).toContain("lab,Default,node-01,up,Red Hat Virtualization Host 4.4,4.4.10,2026-11-14T00:00:00.000Z,48");
+    expect(csv.body).toContain('"262,144 MiB (~256 GiB)",2,5,"12,292 MiB (~12 GiB)",2026-08-12T04:00:00.000Z');
+    expect(csv.body).not.toContain("other");
+    expect(csv.body).not.toContain("manager-password");
+    expect(csv.body).not.toContain("raw-certificate-material-must-not-leak");
+
+    const pdf = await app.inject({
+      method: "GET",
+      url: `/api/exports/snapshot-hosts?format=pdf&managerId=${encodeURIComponent(labManagerId)}&clusterId=cluster-1`,
+      cookies: cookie
+    });
+
+    expect(pdf.statusCode).toBe(200);
+    expect(pdf.headers["content-type"]).toContain("application/pdf");
+    expect(pdf.headers["content-disposition"]).toContain("ovirt-inventory-hardware.pdf");
+    expect(pdf.rawPayload.subarray(0, 5).toString("utf8")).toBe("%PDF-");
+    expect(pdf.rawPayload.toString("utf8")).toContain("ovirt-inventory Hardware Inventory");
+    expect(pdf.rawPayload.toString("utf8")).toContain("Physical CPU Threads");
+    expect(pdf.rawPayload.toString("utf8")).toContain("/MediaBox [0 0 842 612]");
+    expect(pdf.rawPayload.toString("utf8")).not.toContain("other");
+    expect(pdf.rawPayload.toString("utf8")).not.toContain("manager-password");
+    expect(pdf.rawPayload.toString("utf8")).not.toContain("raw-certificate-material-must-not-leak");
+    await app.close();
+  });
+
   it("lists, filters, and exports latest snapshot VM inventory", async () => {
     const { app, cookie } = await authenticatedApp();
     const managerId = await createManager(app, cookie, "lab");

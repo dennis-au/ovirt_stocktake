@@ -191,6 +191,22 @@ const inventoryColumns: Array<{ key: keyof SnapshotVmInventoryRow; title: string
   { key: "collectedAt", title: "Collected At" }
 ];
 
+const hardwareInventoryColumns: Array<{ key: keyof SnapshotHostInventoryRow; title: string; format?: (row: SnapshotHostInventoryRow) => unknown }> = [
+  { key: "managerName", title: "Manager" },
+  { key: "clusterName", title: "Cluster" },
+  { key: "hostName", title: "Host" },
+  { key: "status", title: "Status" },
+  { key: "hostOs", title: "Host OS" },
+  { key: "vdsmVersion", title: "oVirt/VDSM Version" },
+  { key: "certificateExpiresAt", title: "Certificate Expiry" },
+  { key: "physicalCpuThreads", title: "Physical CPU Threads" },
+  { key: "physicalMemoryMiB", title: "Physical RAM", format: (row) => formatMemory(row.physicalMemoryMiB) },
+  { key: "hostedVmCount", title: "Hosted VMs" },
+  { key: "allocatedVcpu", title: "Allocated vCPU" },
+  { key: "allocatedRamMiB", title: "Allocated RAM", format: (row) => formatMemory(row.allocatedRamMiB) },
+  { key: "collectedAt", title: "Collected At" }
+];
+
 const sortableColumns = new Set<SnapshotVmInventorySortKey>([
   "managerName",
   "clusterName",
@@ -240,6 +256,30 @@ export function registerSnapshotInventoryRoutes(app: FastifyInstance, db: Sqlite
       .header("Content-Type", "application/pdf")
       .header("Content-Disposition", "attachment; filename=\"ovirt-inventory-vms.pdf\"")
       .send(snapshotVmInventoryPdf(inventory.rows, inventory.filters));
+  });
+
+  app.get("/api/exports/snapshot-hosts", { preHandler: requireRole(roles.read) }, async (request, reply) => {
+    const format = parseExportFormat(request.query);
+    const filters = parseSnapshotHostInventoryQuery(request.query).filters;
+    const rows = filteredSnapshotHostRows(db, filters);
+    const session = currentSession(db, request);
+    recordAudit(db, {
+      actor: session?.username,
+      action: "export.snapshot_host_inventory",
+      metadata: { format, filters, rows: rows.length }
+    });
+
+    if (format === "csv") {
+      return reply
+        .header("Content-Type", "text/csv; charset=utf-8")
+        .header("Content-Disposition", "attachment; filename=\"ovirt-inventory-hardware.csv\"")
+        .send(snapshotHostInventoryCsv(rows));
+    }
+
+    return reply
+      .header("Content-Type", "application/pdf")
+      .header("Content-Disposition", "attachment; filename=\"ovirt-inventory-hardware.pdf\"")
+      .send(snapshotHostInventoryPdf(rows, filters));
   });
 
   app.get("/api/exports/relationships", { preHandler: requireRole(roles.read) }, async (request, reply) => {
@@ -298,6 +338,10 @@ export function querySnapshotHostInventory(db: SqliteDatabase, query: SnapshotHo
       clusters: uniquePairs(allRows.filter((row) => row.clusterId).map((row) => ({ value: row.clusterId!, label: row.clusterName ?? row.clusterId! })))
     }
   };
+}
+
+function filteredSnapshotHostRows(db: SqliteDatabase, filters: SnapshotHostInventoryFilters): SnapshotHostInventoryRow[] {
+  return allLatestSnapshotHostRows(db).filter((row) => matchesHostFilters(row, filters));
 }
 
 export function queryRelationships(db: SqliteDatabase): RelationshipResult {
@@ -636,6 +680,13 @@ function snapshotVmInventoryCsv(rows: SnapshotVmInventoryRow[]): string {
   ].join("\n");
 }
 
+function snapshotHostInventoryCsv(rows: SnapshotHostInventoryRow[]): string {
+  return [
+    hardwareInventoryColumns.map((column) => csvCell(column.title)).join(","),
+    ...rows.map((row) => hardwareInventoryColumns.map((column) => csvCell(column.format ? column.format(row) : row[column.key])).join(","))
+  ].join("\n");
+}
+
 const relationshipColumns = [
   { key: "hostName", title: "Host" },
   { key: "vmName", title: "VM" },
@@ -758,8 +809,40 @@ function snapshotVmInventoryPdf(rows: SnapshotVmInventoryRow[], filters: Snapsho
   return simplePdf(lines);
 }
 
-function simplePdf(lines: string[]): Buffer {
-  const chunks = chunk(lines.map(pdfLine), 38);
+function snapshotHostInventoryPdf(rows: SnapshotHostInventoryRow[], filters: SnapshotHostInventoryFilters): Buffer {
+  const filterText = Object.entries(filters)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(", ");
+  const lines = [
+    "ovirt-inventory Hardware Inventory",
+    `Generated: ${new Date().toISOString()}`,
+    `Filters: ${filterText || "none"}`,
+    `Rows: ${rows.length}`,
+    "",
+    hardwareInventoryColumns.map((column) => column.title).join(" | "),
+    ...rows.map((row) => hardwareInventoryColumns.map((column) => String((column.format ? column.format(row) : row[column.key]) ?? "-")).join(" | "))
+  ];
+  return simplePdf(lines, { landscape: true, fontSize: 6, lineHeight: 8, linesPerPage: 60, maxLineLength: 260 });
+}
+
+interface SimplePdfOptions {
+  landscape?: boolean;
+  fontSize?: number;
+  lineHeight?: number;
+  linesPerPage?: number;
+  maxLineLength?: number;
+}
+
+function simplePdf(lines: string[], options: SimplePdfOptions = {}): Buffer {
+  const landscape = options.landscape ?? false;
+  const fontSize = options.fontSize ?? 8;
+  const lineHeight = options.lineHeight ?? 10;
+  const linesPerPage = options.linesPerPage ?? 38;
+  const maxLineLength = options.maxLineLength ?? 170;
+  const pageWidth = landscape ? 842 : 612;
+  const pageHeight = landscape ? 612 : 842;
+  const chunks = chunk(lines.map((line) => pdfLine(line, maxLineLength)), linesPerPage);
   const objects: string[] = [""];
   const catalogId = addObject(objects, "<< /Type /Catalog /Pages 2 0 R >>");
   const pagesId = addObject(objects, "");
@@ -767,11 +850,11 @@ function simplePdf(lines: string[]): Buffer {
   const pageIds: number[] = [];
 
   for (const pageLines of chunks.length ? chunks : [[]]) {
-    const content = `BT /F1 8 Tf 36 792 Td 10 TL ${pageLines.map((line) => `(${escapePdf(line)}) Tj T*`).join(" ")} ET`;
+    const content = `BT /F1 ${fontSize} Tf 36 ${pageHeight - 50} Td ${lineHeight} TL ${pageLines.map((line) => `(${escapePdf(line)}) Tj T*`).join(" ")} ET`;
     const contentId = addObject(objects, `<< /Length ${Buffer.byteLength(content, "utf8")} >>\nstream\n${content}\nendstream`);
     const pageId = addObject(
       objects,
-      `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 612 842] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`
+      `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`
     );
     pageIds.push(pageId);
   }
@@ -798,8 +881,8 @@ function addObject(objects: string[], body: string): number {
   return objects.length - 1;
 }
 
-function pdfLine(value: string): string {
-  return value.replace(/[^\x20-\x7e]/g, "?").slice(0, 170);
+function pdfLine(value: string, maxLength: number): string {
+  return value.replace(/[^\x20-\x7e]/g, "?").slice(0, maxLength);
 }
 
 function escapePdf(value: string): string {

@@ -515,6 +515,10 @@ export function snapshotVmInventoryExportUrl(format: "csv" | "pdf", filters: Sna
   return `/api/exports/snapshot-vms${queryString({ ...filters, format })}`;
 }
 
+export function snapshotHostInventoryExportUrl(format: "csv" | "pdf", filters: SnapshotHostInventoryFilters = {}): string {
+  return `/api/exports/snapshot-hosts${queryString({ ...filters, format })}`;
+}
+
 export async function getRelationships(): Promise<RelationshipResponse> {
   const response = await fetch("/api/inventory/relationships");
   const body = (await response.json().catch(() => undefined)) as { relationships?: RelationshipResponse; error?: string } | undefined;
