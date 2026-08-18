@@ -78,7 +78,7 @@ describe("oVirt inventory normalization", () => {
           {
             id: "snapshot-1",
             description: "before-change",
-            date: "2026-08-10T12:00:00.000Z",
+            date: "2026-08-10T10:00:00.000Z",
             snapshot_status: "ok",
             vm: { id: "vm-1", name: "api-01" }
           }
@@ -126,5 +126,65 @@ describe("oVirt inventory normalization", () => {
     expect(input.resources.affinityGroups?.[0]).toMatchObject({ affinityGroupId: "affinity-1", vmIds: ["vm-1"] });
     expect(input.resources.events?.[0]).toMatchObject({ eventId: "event-1", resourceId: "vm-1" });
     vi.useRealTimers();
+  });
+
+  it("calculates snapshot age from the collection timestamp", () => {
+    vi.setSystemTime(new Date("2026-08-18T12:00:00.000Z"));
+    const snapshot: SnapshotPayload = {
+      managerId: "manager-1",
+      managerName: "Lab",
+      managerUrl: "https://lab.example/ovirt-engine",
+      collectedAt: "2026-08-12T00:00:00.000Z",
+      apiVersion: "4.5",
+      durationMs: 86_400_000,
+      status: "success",
+      resources: {
+        ...emptyInventoryResources(),
+        vms: [{ id: "vm-1", name: "api-01" }],
+        vmSnapshots: [
+          {
+            id: "snapshot-1",
+            description: "pre-change",
+            date: "2026-08-02T00:00:00.000Z",
+            vm: { id: "vm-1", name: "api-01" }
+          }
+        ]
+      },
+      warnings: [],
+      errors: []
+    };
+
+    const input = snapshotToInventorySyncInput(snapshot);
+
+    expect(input.resources.vms?.[0]?.snapshots).toEqual([
+      expect.objectContaining({ snapshotId: "snapshot-1", createdAt: "2026-08-02T00:00:00.000Z", ageDays: 10 })
+    ]);
+    vi.useRealTimers();
+  });
+
+  it("excludes active snapshots using snapshot type even when the name is not Active VM", () => {
+    const snapshot: SnapshotPayload = {
+      managerId: "manager-1",
+      managerName: "Lab",
+      managerUrl: "https://lab.example/ovirt-engine",
+      collectedAt: "2026-08-12T00:00:00.000Z",
+      apiVersion: "4.5",
+      durationMs: 100,
+      status: "success",
+      resources: {
+        ...emptyInventoryResources(),
+        vms: [{ id: "vm-1", name: "api-01" }],
+        vmSnapshots: [
+          { id: "snapshot-active", description: "Current state", snapshot_type: "active", vm: { id: "vm-1" } },
+          { id: "snapshot-regular", description: "pre-change", date: "2026-08-02T00:00:00.000Z", vm: { id: "vm-1" } }
+        ]
+      },
+      warnings: [],
+      errors: []
+    };
+
+    const input = snapshotToInventorySyncInput(snapshot);
+
+    expect(input.resources.vms?.[0]?.snapshots).toEqual([expect.objectContaining({ snapshotId: "snapshot-regular" })]);
   });
 });

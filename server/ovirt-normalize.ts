@@ -15,10 +15,12 @@ import type {
   VnicProfileRecord
 } from "./postgres/inventory.js";
 import type { InventoryResource, SnapshotPayload } from "../shared/snapshot.js";
+import { snapshotAgeDaysAt, snapshotCreatedAt } from "./snapshot-age.js";
+import { isActiveVmSnapshot } from "./snapshot-semantics.js";
 
 export function snapshotToInventorySyncInput(snapshot: SnapshotPayload): InventorySyncInput {
-  const vmSnapshotsByVmId = groupVmSnapshots(snapshot.resources.vmSnapshots);
   const completedAt = new Date(Date.parse(snapshot.collectedAt) + snapshot.durationMs).toISOString();
+  const vmSnapshotsByVmId = groupVmSnapshots(snapshot.resources.vmSnapshots, snapshot.collectedAt);
 
   return {
     managerId: snapshot.managerId,
@@ -207,15 +209,15 @@ function toVmDisk(raw: InventoryResource): VmDiskRecord {
   };
 }
 
-function toVmSnapshot(raw: InventoryResource): VmSnapshotRecord {
-  const createdAt = timestampValue(raw.date);
+function toVmSnapshot(raw: InventoryResource, collectedAt: string): VmSnapshotRecord {
+  const createdAt = snapshotCreatedAt(raw.date);
   return {
     snapshotId: requiredString(raw.id, "snapshot id"),
     description: stringValue(raw.description),
     createdAt,
     status: stringValue(raw.snapshot_status ?? raw.status),
     snapshotType: stringValue(raw.snapshot_type),
-    ageDays: createdAt ? Math.max(0, Math.floor((Date.now() - Date.parse(createdAt)) / 86_400_000)) : undefined,
+    ageDays: snapshotAgeDaysAt(createdAt, collectedAt),
     raw
   };
 }
@@ -243,14 +245,17 @@ function toEvent(raw: InventoryResource, fallbackTime: string): EventRecord {
   };
 }
 
-function groupVmSnapshots(rows: InventoryResource[]): Map<string, VmSnapshotRecord[]> {
+function groupVmSnapshots(rows: InventoryResource[], collectedAt: string): Map<string, VmSnapshotRecord[]> {
   const result = new Map<string, VmSnapshotRecord[]>();
   for (const row of rows) {
+    if (isActiveVmSnapshot(row)) {
+      continue;
+    }
     const vmId = refId(row.vm);
     if (!vmId) {
       continue;
     }
-    result.set(vmId, [...(result.get(vmId) ?? []), toVmSnapshot(row)]);
+    result.set(vmId, [...(result.get(vmId) ?? []), toVmSnapshot(row, collectedAt)]);
   }
   return result;
 }

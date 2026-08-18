@@ -4,6 +4,8 @@ import { recordAudit } from "./audit.js";
 import type { SqliteDatabase } from "./db.js";
 import { certificateExpiresAtFromHost } from "./host-certificate.js";
 import { requireRole, roles } from "./rbac.js";
+import { snapshotAgeDaysAt, snapshotCreatedAt } from "./snapshot-age.js";
+import { isActiveVmSnapshot } from "./snapshot-semantics.js";
 import { type InventoryResource, type InventoryResources } from "../shared/snapshot.js";
 
 interface SnapshotRow {
@@ -941,15 +943,15 @@ function vmSnapshotDetailsByVmId(resources: InventoryResources, collectedAt: str
   for (const snapshot of resources.vmSnapshots) {
     const vmId = refId(snapshot.vm) ?? stringValue(snapshot.vm_id) ?? stringValue(snapshot.vmId);
     const name = stringValue(snapshot.name) ?? stringValue(snapshot.description) ?? stringValue(snapshot.id);
-    if (!vmId || !name || name.trim().toLowerCase() === "active vm") {
+    if (!vmId || !name || isActiveVmSnapshot(snapshot)) {
       continue;
     }
     const current = byVmId.get(vmId) ?? [];
     if (current.some((item) => item.name === name)) {
       continue;
     }
-    const createdAt = snapshotTimestamp(snapshot.date);
-    const ageDays = snapshotAgeDays(createdAt, collectedAt);
+    const createdAt = snapshotCreatedAt(snapshot.date);
+    const ageDays = snapshotAgeDaysAt(createdAt, collectedAt);
     current.push({
       name,
       ...(createdAt ? { createdAt } : {}),
@@ -958,23 +960,6 @@ function vmSnapshotDetailsByVmId(resources: InventoryResources, collectedAt: str
     byVmId.set(vmId, current);
   }
   return byVmId;
-}
-
-function snapshotTimestamp(value: unknown): string | undefined {
-  const text = stringValue(value);
-  return text && !Number.isNaN(Date.parse(text)) ? text : undefined;
-}
-
-function snapshotAgeDays(createdAt: string | undefined, collectedAt: string): number | undefined {
-  if (!createdAt) {
-    return undefined;
-  }
-  const createdTimestamp = Date.parse(createdAt);
-  const collectedTimestamp = Date.parse(collectedAt);
-  if (Number.isNaN(createdTimestamp) || Number.isNaN(collectedTimestamp)) {
-    return undefined;
-  }
-  return Math.max(0, Math.floor((collectedTimestamp - createdTimestamp) / 86_400_000));
 }
 
 function vmStorageDomainNames(

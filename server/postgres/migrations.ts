@@ -469,5 +469,36 @@ export const postgresMigrations: PostgresMigration[] = [
         ON scheduler_schedule_state (next_run_at)
         WHERE enabled = TRUE;
     `
+  },
+  {
+    id: "005_scheduler_dispatch_runs",
+    sql: `
+      CREATE TABLE IF NOT EXISTS scheduler_dispatch_runs (
+        id TEXT PRIMARY KEY,
+        job_type TEXT NOT NULL CHECK (job_type IN ('inventory', 'metrics')),
+        status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'success', 'partial', 'failed')),
+        expected_manager_count INTEGER NOT NULL CHECK (expected_manager_count >= 0),
+        started_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ,
+        error_summary TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS scheduler_dispatch_run_managers (
+        run_id TEXT NOT NULL REFERENCES scheduler_dispatch_runs(id) ON DELETE CASCADE,
+        manager_id TEXT NOT NULL,
+        queue_job_id TEXT,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'queued', 'running', 'success', 'partial', 'failed', 'skipped')),
+        error_summary TEXT,
+        started_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ,
+        PRIMARY KEY (run_id, manager_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_scheduler_dispatch_runs_job_created
+        ON scheduler_dispatch_runs (job_type, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_scheduler_dispatch_run_managers_status
+        ON scheduler_dispatch_run_managers (run_id, status);
+    `
   }
 ];

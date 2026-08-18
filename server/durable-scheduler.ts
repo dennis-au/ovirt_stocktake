@@ -6,6 +6,15 @@ import type { SqliteDatabase } from "./db.js";
 import { collectManagerMetricsById, metricsStorageEnabled } from "./metrics-collection.js";
 import type { ConnectablePostgres } from "./postgres/inventory.js";
 import {
+  completeSchedulerRunManager,
+  createSchedulerRun,
+  finalizeSchedulerRun,
+  hasActiveSchedulerRun,
+  markSchedulerRunManagerQueued,
+  markSchedulerRunManagerStarted,
+  type SchedulerDispatchRun
+} from "./scheduler-runs.js";
+import {
   claimDueSchedule,
   markScheduleCompleted,
   markScheduleStarted,
@@ -42,6 +51,8 @@ const managerQueueDefinition: Omit<Queue, "name"> = {
 export interface QueueJob<T extends object = object> {
   id: string;
   data: T;
+  retryCount?: number;
+  retryLimit?: number;
 }
 
 export interface QueueJobResult {
@@ -83,6 +94,7 @@ interface DurableSchedulerOptions {
 
 interface ManagerJobData {
   managerId: string;
+  runId?: string;
 }
 
 export function schedulerAvailable(config: AppConfig, inventoryDb?: ConnectablePostgres): boolean {
@@ -145,6 +157,9 @@ class PgBossScheduler implements DurableScheduler {
   }
 
   async dispatchDue(jobType: ScheduledJobType): Promise<void> {
+    if (await hasActiveSchedulerRun(this.options.inventoryDb, jobType)) {
+      return;
+    }
     const schedule = await claimDueSchedule(this.options.inventoryDb, jobType);
     if (!schedule) {
       return;
@@ -153,29 +168,44 @@ class PgBossScheduler implements DurableScheduler {
     const managerIds = listEnabledManagerIds(this.options.db);
     const queueName = jobType === "inventory" ? inventoryManagerQueue : metricsManagerQueue;
     const queued: string[] = [];
+    const run = await createSchedulerRun(this.options.inventoryDb, jobType, managerIds);
+    await markScheduleStarted(this.options.inventoryDb, jobType);
+    let completedRun = managerIds.length === 0 ? await finalizeSchedulerRun(this.options.inventoryDb, run.id) : undefined;
     for (const managerId of managerIds) {
-      const id = await this.queue.send(queueName, { managerId }, managerSendOptions(jobType, managerId));
-      if (id) {
-        queued.push(managerId);
-        recordAudit(this.options.db, {
-          actor: "scheduler",
-          action: "scheduler.manager_queued",
-          resourceType: "manager",
-          resourceId: managerId,
-          metadata: { jobType, jobId: id }
-        });
+      try {
+        const id = await this.queue.send(queueName, { managerId, runId: run.id }, managerSendOptions(jobType, managerId));
+        if (id) {
+          await markSchedulerRunManagerQueued(this.options.inventoryDb, run.id, managerId, id);
+          queued.push(managerId);
+          recordAudit(this.options.db, {
+            actor: "scheduler",
+            action: "scheduler.manager_queued",
+            resourceType: "manager",
+            resourceId: managerId,
+            metadata: { jobType, jobId: id, runId: run.id }
+          });
+        } else {
+          completedRun =
+            (await completeSchedulerRunManager(
+              this.options.inventoryDb,
+              run.id,
+              managerId,
+              "skipped",
+              "A matching scheduler job is already active"
+            )) ?? completedRun;
+        }
+      } catch (error) {
+        completedRun =
+          (await completeSchedulerRunManager(this.options.inventoryDb, run.id, managerId, "failed", errorMessage(error))) ?? completedRun;
       }
     }
+    await this.completeScheduleRun(jobType, completedRun);
 
     recordAudit(this.options.db, {
       actor: "scheduler",
       action: "scheduler.dispatch_completed",
-      metadata: { jobType, managers: managerIds.length, queuedManagers: queued.length, intervalMinutes: schedule.intervalMinutes }
+      metadata: { jobType, runId: run.id, managers: managerIds.length, queuedManagers: queued.length, intervalMinutes: schedule.intervalMinutes }
     });
-
-    if (managerIds.length === 0) {
-      await markScheduleCompleted(this.options.inventoryDb, jobType, "success");
-    }
   }
 
   private async createQueues(): Promise<void> {
@@ -207,6 +237,7 @@ class PgBossScheduler implements DurableScheduler {
   private get managerWorkOptions(): WorkOptions {
     return {
       localConcurrency: this.options.config.scheduler.workerConcurrency,
+      includeMetadata: true,
       perJobResults: true,
       heartbeatRefreshSeconds: 15
     };
@@ -223,12 +254,18 @@ class PgBossScheduler implements DurableScheduler {
   }
 
   private async runInventoryManagerJob(job: QueueJob<ManagerJobData>): Promise<QueueJobResult> {
-    const { managerId } = job.data;
-    await markScheduleStarted(this.options.inventoryDb, "inventory");
+    const { managerId, runId } = job.data;
+    if (!(await this.startManagerRun("inventory", runId, managerId))) {
+      return { id: job.id, status: "completed", output: { skipped: true } };
+    }
     try {
       const snapshot = await collectManagerSnapshotById(this.options.db, this.options.config, managerId, this.options.inventoryDb);
       const errorSummary = snapshot.errors.map((issue) => issue.message).join("; ") || undefined;
-      await markScheduleCompleted(this.options.inventoryDb, "inventory", snapshot.status, errorSummary);
+      if (this.shouldRetry(job, snapshot.status, errorSummary)) {
+        this.recordRetryingManagerJob("inventory", managerId, errorSummary ?? "Scheduled inventory collection failed", job);
+        return failedQueueResult(job.id, errorSummary ?? "Scheduled inventory collection failed");
+      }
+      await this.completeManagerRun("inventory", runId, managerId, snapshot.status, errorSummary);
       recordAudit(this.options.db, {
         actor: "scheduler",
         action: "collection.scheduled_manager_completed",
@@ -243,7 +280,11 @@ class PgBossScheduler implements DurableScheduler {
       return { id: job.id, status: "completed", output: { snapshotId: snapshot.id, status: snapshot.status } };
     } catch (error) {
       const message = errorMessage(error);
-      await markScheduleCompleted(this.options.inventoryDb, "inventory", "failed", message);
+      if (this.shouldRetry(job, "failed", message)) {
+        this.recordRetryingManagerJob("inventory", managerId, message, job);
+        return failedQueueResult(job.id, message);
+      }
+      await this.completeManagerRun("inventory", runId, managerId, "failed", message);
       recordAudit(this.options.db, {
         actor: "scheduler",
         action: "collection.scheduled_manager_failed",
@@ -256,13 +297,19 @@ class PgBossScheduler implements DurableScheduler {
   }
 
   private async runMetricsManagerJob(job: QueueJob<ManagerJobData>): Promise<QueueJobResult> {
-    const { managerId } = job.data;
-    await markScheduleStarted(this.options.inventoryDb, "metrics");
+    const { managerId, runId } = job.data;
+    if (!(await this.startManagerRun("metrics", runId, managerId))) {
+      return { id: job.id, status: "completed", output: { skipped: true } };
+    }
     try {
       const result = await collectManagerMetricsById(this.options.db, this.options.config, managerId, this.options.inventoryDb);
       const errorSummary = result.errors.map((issue) => issue.message).join("; ") || undefined;
       const status: ScheduleResult = result.errors.length === 0 ? "success" : result.sampleCount > 0 ? "partial" : "failed";
-      await markScheduleCompleted(this.options.inventoryDb, "metrics", status, errorSummary);
+      if (this.shouldRetry(job, status, errorSummary)) {
+        this.recordRetryingManagerJob("metrics", managerId, errorSummary ?? "Scheduled metrics collection failed", job);
+        return failedQueueResult(job.id, errorSummary ?? "Scheduled metrics collection failed");
+      }
+      await this.completeManagerRun("metrics", runId, managerId, status, errorSummary);
       recordAudit(this.options.db, {
         actor: "scheduler",
         action: "metrics.scheduled_manager_completed",
@@ -277,7 +324,11 @@ class PgBossScheduler implements DurableScheduler {
       return { id: job.id, status: "completed", output: { status, samples: result.sampleCount } };
     } catch (error) {
       const message = errorMessage(error);
-      await markScheduleCompleted(this.options.inventoryDb, "metrics", "failed", message);
+      if (this.shouldRetry(job, "failed", message)) {
+        this.recordRetryingManagerJob("metrics", managerId, message, job);
+        return failedQueueResult(job.id, message);
+      }
+      await this.completeManagerRun("metrics", runId, managerId, "failed", message);
       recordAudit(this.options.db, {
         actor: "scheduler",
         action: "metrics.scheduled_manager_failed",
@@ -287,6 +338,48 @@ class PgBossScheduler implements DurableScheduler {
       });
       return failedQueueResult(job.id, message);
     }
+  }
+
+  private async startManagerRun(jobType: ScheduledJobType, runId: string | undefined, managerId: string): Promise<boolean> {
+    if (runId) {
+      return markSchedulerRunManagerStarted(this.options.inventoryDb, runId, managerId);
+    }
+    await markScheduleStarted(this.options.inventoryDb, jobType);
+    return true;
+  }
+
+  private async completeManagerRun(
+    jobType: ScheduledJobType,
+    runId: string | undefined,
+    managerId: string,
+    status: ScheduleResult,
+    errorSummary?: string
+  ): Promise<void> {
+    if (!runId) {
+      await markScheduleCompleted(this.options.inventoryDb, jobType, status, errorSummary);
+      return;
+    }
+    await this.completeScheduleRun(jobType, await completeSchedulerRunManager(this.options.inventoryDb, runId, managerId, status, errorSummary));
+  }
+
+  private async completeScheduleRun(jobType: ScheduledJobType, run: SchedulerDispatchRun | undefined): Promise<void> {
+    if (run && run.status !== "queued" && run.status !== "running") {
+      await markScheduleCompleted(this.options.inventoryDb, jobType, run.status, run.errorSummary);
+    }
+  }
+
+  private shouldRetry(job: QueueJob, status: ScheduleResult, message: string | undefined): boolean {
+    return status === "failed" && !isPermanentFailure(message ?? "") && (job.retryCount ?? 0) < (job.retryLimit ?? 0);
+  }
+
+  private recordRetryingManagerJob(jobType: ScheduledJobType, managerId: string, message: string, job: QueueJob): void {
+    recordAudit(this.options.db, {
+      actor: "scheduler",
+      action: "scheduler.manager_retrying",
+      resourceType: "manager",
+      resourceId: managerId,
+      metadata: { jobType, message, retryAttempt: (job.retryCount ?? 0) + 1, retryLimit: job.retryLimit ?? 0 }
+    });
   }
 }
 
@@ -360,7 +453,17 @@ function createPgBossQueue(config: AppConfig): DurableJobQueue {
     },
     async work(name, options, handler) {
       await boss.work<Record<string, unknown>>(name, options as WorkOptions, async (jobs) =>
-        handler(jobs.map((job) => ({ id: job.id, data: job.data })))
+        handler(
+          jobs.map((job) => {
+            const metadata = job as { retryCount?: unknown; retryLimit?: unknown };
+            return {
+              id: job.id,
+              data: job.data,
+              ...(typeof metadata.retryCount === "number" ? { retryCount: metadata.retryCount } : {}),
+              ...(typeof metadata.retryLimit === "number" ? { retryLimit: metadata.retryLimit } : {})
+            };
+          })
+        )
       );
     },
     async send(name, data, options) {

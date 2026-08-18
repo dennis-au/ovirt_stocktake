@@ -10,7 +10,9 @@ import {
   type ResourceKey,
   type SnapshotPayload
 } from "../shared/snapshot.js";
-import { withoutHostCertificateContent } from "./host-certificate.js";
+import { certificateExpiresAtFromHost, withoutHostCertificateContent } from "./host-certificate.js";
+import { snapshotCreatedAt } from "./snapshot-age.js";
+import { isActiveVmSnapshot } from "./snapshot-semantics.js";
 
 export interface OvirtCollectionTarget {
   managerId: string;
@@ -23,6 +25,8 @@ export interface OvirtCollectionTarget {
 export interface OvirtCollectorOptions {
   fetchImpl?: typeof fetch;
   allowInsecureTls?: boolean;
+  requestTimeoutMs?: number;
+  detailConcurrency?: number;
 }
 
 export type OvirtCapacityResourceType = "vm" | "host" | "storage_domain";
@@ -62,6 +66,8 @@ interface OvirtRequestInit {
 }
 
 const PAGE_SIZE = 1000;
+const defaultRequestTimeoutMs = 30_000;
+const defaultDetailConcurrency = 4;
 
 const topLevelResources: ResourceSpec[] = [
   { key: "dataCenters", path: "datacenters", itemKey: "data_center" },
@@ -113,9 +119,11 @@ export async function collectOvirtSnapshot(target: OvirtCollectionTarget, option
     }
   }
 
-  inventory.hosts = inventory.hosts.map(withoutHostCertificateContent);
+  inventory.hosts = (await hydrateHostCertificateExpiry(fetchImpl, target.managerUrl, inventory.hosts, authorization, options, warnings, errors)).map(
+    withoutHostCertificateContent
+  );
 
-  inventory.vmSnapshots = await collectChildResources(fetchImpl, target.managerUrl, inventory.vms, "vmSnapshots", "snapshots", "snapshot", authorization, options, errors);
+  inventory.vmSnapshots = await collectVmSnapshots(fetchImpl, target.managerUrl, inventory.vms, authorization, options, warnings, errors);
   inventory.affinityGroups = await collectChildResources(
     fetchImpl,
     target.managerUrl,
@@ -572,15 +580,152 @@ async function collectChildResources(
   return result;
 }
 
+async function collectVmSnapshots(
+  fetchImpl: typeof fetch,
+  managerUrl: string,
+  vms: InventoryResource[],
+  authorization: string,
+  options: OvirtCollectorOptions,
+  warnings: CollectionIssue[],
+  errors: CollectionIssue[]
+): Promise<InventoryResource[]> {
+  const validVms = vms.filter((vm): vm is InventoryResource & { id: string } => typeof vm.id === "string" && Boolean(vm.id));
+  const listedSnapshots = await mapWithConcurrency(validVms, detailConcurrency(options), async (vm) => {
+    try {
+      const rows = await listResourcePath(
+        fetchImpl,
+        managerUrl,
+        `vms/${encodeURIComponent(vm.id)}/snapshots`,
+        "snapshot",
+        authorization,
+        options
+      );
+      return rows.map((snapshot) => ({ vm, snapshot }));
+    } catch (error) {
+      errors.push({
+        resource: "vmSnapshots",
+        message: `${displayName(vm)} snapshots collection failed: ${error instanceof Error ? error.message : "Collection failed"}`
+      });
+      return [];
+    }
+  });
+
+  const snapshots = await mapWithConcurrency(listedSnapshots.flat(), detailConcurrency(options), async ({ vm, snapshot }) => {
+    const hydrated = await hydrateVmSnapshotDate(fetchImpl, managerUrl, vm, vm.id, snapshot, authorization, options, warnings, errors);
+    return withParentReference(hydrated, "vm", vm);
+  });
+  return snapshots;
+}
+
+async function hydrateHostCertificateExpiry(
+  fetchImpl: typeof fetch,
+  managerUrl: string,
+  hosts: InventoryResource[],
+  authorization: string,
+  options: OvirtCollectorOptions,
+  warnings: CollectionIssue[],
+  errors: CollectionIssue[]
+): Promise<InventoryResource[]> {
+  return mapWithConcurrency(hosts, detailConcurrency(options), async (host) => {
+    const hostId = nonEmptyString(host.id);
+    if (!hostId || certificateExpiresAtFromHost(host)) {
+      return host;
+    }
+
+    try {
+      const detail = await getResourcePath(fetchImpl, managerUrl, `hosts/${encodeURIComponent(hostId)}`, "host", authorization, options);
+      const certificateExpiresAt = certificateExpiresAtFromHost(detail);
+      if (certificateExpiresAt) {
+        return { ...host, certificateExpiresAt };
+      } else {
+        warnings.push({ resource: "hosts", message: `${displayName(host)} certificate expiry is unavailable` });
+        return host;
+      }
+    } catch (error) {
+      errors.push({
+        resource: "hosts",
+        message: `${displayName(host)} certificate detail collection failed: ${error instanceof Error ? error.message : "Collection failed"}`
+      });
+      return host;
+    }
+  });
+}
+
+async function hydrateVmSnapshotDate(
+  fetchImpl: typeof fetch,
+  managerUrl: string,
+  vm: InventoryResource,
+  vmId: string,
+  snapshot: InventoryResource,
+  authorization: string,
+  options: OvirtCollectorOptions,
+  warnings: CollectionIssue[],
+  errors: CollectionIssue[]
+): Promise<InventoryResource> {
+  const snapshotId = nonEmptyString(snapshot.id);
+  if (!snapshotId || isActiveVmSnapshot(snapshot) || snapshotCreatedAt(snapshot.date)) {
+    return snapshot;
+  }
+
+  try {
+    const detail = await getResourcePath(
+      fetchImpl,
+      managerUrl,
+      `vms/${encodeURIComponent(vmId)}/snapshots/${encodeURIComponent(snapshotId)}`,
+      "snapshot",
+      authorization,
+      options
+    );
+    const date = snapshotCreatedAt(detail.date);
+    if (date) {
+      return { ...snapshot, date };
+    }
+    warnings.push({ resource: "vmSnapshots", message: `${displayName(vm)} snapshot ${displayName(snapshot)} has no creation date` });
+  } catch (error) {
+    errors.push({
+      resource: "vmSnapshots",
+      message: `${displayName(vm)} snapshot ${displayName(snapshot)} detail collection failed: ${error instanceof Error ? error.message : "Collection failed"}`
+    });
+  }
+
+  return snapshot;
+}
+
+async function getResourcePath(
+  fetchImpl: typeof fetch,
+  managerUrl: string,
+  path: string,
+  itemKey: string,
+  authorization: string,
+  options: OvirtCollectorOptions
+): Promise<InventoryResource> {
+  const url = new URL(`${ovirtApiBase(managerUrl)}/${path}`);
+  const payload = await getJson(fetchImpl, url, options, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: authorization
+    }
+  });
+  const rows = collectionItems(payload, itemKey);
+  if (rows.length !== 1) {
+    throw new Error("oVirt returned an invalid resource response");
+  }
+  return rows[0];
+}
+
 async function getJson(fetchImpl: typeof fetch, url: URL, options: OvirtCollectorOptions, init: OvirtRequestInit): Promise<unknown> {
   if (!options.fetchImpl && options.allowInsecureTls) {
-    return requestJson(url, init, false);
+    return requestJson(url, init, false, requestTimeoutMs(options));
   }
 
   let response: Response;
   try {
-    response = await fetchImpl(url.toString(), init);
-  } catch {
+    response = await fetchJsonWithTimeout(fetchImpl, url.toString(), init, requestTimeoutMs(options));
+  } catch (error) {
+    if (error instanceof Error && error.message === "oVirt request timed out") {
+      throw error;
+    }
     throw new Error("Network or TLS failure while contacting oVirt Manager");
   }
 
@@ -594,7 +739,27 @@ async function getJson(fetchImpl: typeof fetch, url: URL, options: OvirtCollecto
   return response.json();
 }
 
-async function requestJson(url: URL, init: OvirtRequestInit, rejectUnauthorized: boolean): Promise<unknown> {
+async function fetchJsonWithTimeout(fetchImpl: typeof fetch, url: string, init: OvirtRequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      fetchImpl(url, { ...init, signal: controller.signal }),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          reject(new Error("oVirt request timed out"));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+async function requestJson(url: URL, init: OvirtRequestInit, rejectUnauthorized: boolean, timeoutMs: number): Promise<unknown> {
   const response = await new Promise<{ body: string; statusCode: number }>((resolve, reject) => {
     const body = init.body ? Buffer.from(init.body, "utf8") : undefined;
     const requestOptions: HttpsRequestOptions = {
@@ -622,7 +787,7 @@ async function requestJson(url: URL, init: OvirtRequestInit, rejectUnauthorized:
       });
     });
 
-    request.setTimeout(30_000, () => {
+    request.setTimeout(timeoutMs, () => {
       request.destroy(new Error("oVirt request timed out"));
     });
     request.on("error", reject);
@@ -630,7 +795,10 @@ async function requestJson(url: URL, init: OvirtRequestInit, rejectUnauthorized:
       request.write(body);
     }
     request.end();
-  }).catch(() => {
+  }).catch((error: unknown) => {
+    if (error instanceof Error && error.message === "oVirt request timed out") {
+      throw error;
+    }
     throw new Error("Network or TLS failure while contacting oVirt Manager");
   });
 
@@ -683,6 +851,34 @@ function withParentReference(row: InventoryResource, parentKey: "cluster" | "vm"
       name: typeof parent.name === "string" ? parent.name : undefined
     }
   };
+}
+
+function requestTimeoutMs(options: OvirtCollectorOptions): number {
+  return boundedPositiveInteger(options.requestTimeoutMs, defaultRequestTimeoutMs, 1, 120_000);
+}
+
+function detailConcurrency(options: OvirtCollectorOptions): number {
+  return boundedPositiveInteger(options.detailConcurrency, defaultDetailConcurrency, 1, 16);
+}
+
+function boundedPositiveInteger(value: number | undefined, fallback: number, minimum: number, maximum: number): number {
+  if (!Number.isInteger(value) || value === undefined) {
+    return fallback;
+  }
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, map: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await map(items[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function appendGuestAgentWarnings(inventory: InventoryResources, warnings: CollectionIssue[]): void {
