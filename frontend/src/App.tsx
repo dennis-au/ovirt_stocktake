@@ -66,6 +66,7 @@ import {
   type SnapshotDetail,
   type SnapshotHostInventoryFilters,
   type SnapshotHostInventoryResponse,
+  type SnapshotInventorySnapshot,
   type SnapshotSummary,
   type SnapshotVmInventoryFilters,
   type SnapshotVmInventoryResponse,
@@ -1939,7 +1940,10 @@ function formatIpAddresses(vm: SnapshotVmInventoryRow) {
 }
 
 function formatSnapshotNames(vm: SnapshotVmInventoryRow) {
-  return vm.snapshotNames.length ? vm.snapshotNames.join(", ") : "-";
+  const snapshots: SnapshotInventorySnapshot[] = vm.snapshotDetails ?? vm.snapshotNames.map((name) => ({ name }));
+  return snapshots.length
+    ? snapshots.map((snapshot) => `${snapshot.name} (${snapshot.ageDays === undefined ? "age unknown" : `${snapshot.ageDays}d`})`).join(", ")
+    : "-";
 }
 
 function formatMemory(value: number | undefined) {

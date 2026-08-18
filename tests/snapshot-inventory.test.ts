@@ -149,9 +149,9 @@ function snapshot(managerId: string, managerName: string): SnapshotPayload {
         }
       ],
       vmSnapshots: [
-        { id: "snap-current", description: "Active VM", vm: { id: "vm-1", name: "api-01" } },
-        { id: "snap-1", name: "before-patch", vm: { id: "vm-1", name: "api-01" } },
-        { id: "snap-2", description: "pre-upgrade", vm: { id: "vm-1", name: "api-01" } },
+        { id: "snap-current", description: "Active VM", date: "2026-08-12T03:00:00.000Z", vm: { id: "vm-1", name: "api-01" } },
+        { id: "snap-1", name: "before-patch", date: "2026-08-02T04:00:00.000Z", vm: { id: "vm-1", name: "api-01" } },
+        { id: "snap-2", description: "pre-upgrade", date: "2026-08-09T04:00:00.000Z", vm: { id: "vm-1", name: "api-01" } },
         { id: "snap-active", description: "Active VM", vm: { id: "vm-2", name: "web-10" } }
       ]
     },
@@ -267,6 +267,10 @@ describe("snapshot-backed VM inventory", () => {
       storageUsedGiB: 15,
       snapshotNames: ["before-patch", "pre-upgrade"]
     });
+    expect(list.json().inventory.rows[0].snapshotDetails).toEqual([
+      { name: "before-patch", createdAt: "2026-08-02T04:00:00.000Z", ageDays: 10 },
+      { name: "pre-upgrade", createdAt: "2026-08-09T04:00:00.000Z", ageDays: 3 }
+    ]);
     expect(list.json().inventory.rows[0].snapshotNames).not.toContain("Active VM");
     expect(list.json().inventory.filterOptions.clusters).toEqual([{ value: "cluster-1", label: "Default" }]);
 
@@ -285,7 +289,7 @@ describe("snapshot-backed VM inventory", () => {
     expect(csv.headers["content-type"]).toContain("text/csv");
     expect(csv.body).toContain("api-01");
     expect(csv.body).toContain("Snapshots");
-    expect(csv.body).toContain("before-patch; pre-upgrade");
+    expect(csv.body).toContain("before-patch (10d); pre-upgrade (3d)");
     expect(csv.body).toContain("IP Addresses");
     expect(csv.body).toContain("10.0.0.10; 10.0.0.11; 10.0.0.12");
     expect(csv.body).toContain("8,192 MiB (~8 GiB)");
@@ -297,6 +301,27 @@ describe("snapshot-backed VM inventory", () => {
     expect(pdf.headers["content-type"]).toContain("application/pdf");
     expect(pdf.rawPayload.subarray(0, 5).toString("utf8")).toBe("%PDF-");
     expect(pdf.rawPayload.toString("utf8")).not.toContain("manager-password");
+    await app.close();
+  });
+
+  it("keeps snapshot age unknown when the oVirt response has no snapshot date", async () => {
+    const { app, cookie } = await authenticatedApp();
+    const managerId = await createManager(app, cookie, "lab");
+    const payload = snapshot(managerId, "lab");
+    payload.resources.vmSnapshots = [
+      { id: "snap-undated", name: "undated", vm: { id: "vm-1", name: "api-01" } },
+      { id: "snap-active", description: "Active VM", vm: { id: "vm-1", name: "api-01" } }
+    ];
+    await app.inject({ method: "POST", url: "/api/snapshots", cookies: cookie, payload });
+
+    const list = await app.inject({ method: "GET", url: "/api/inventory/snapshot-vms", cookies: cookie });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().inventory.rows[0].snapshotDetails).toEqual([{ name: "undated" }]);
+
+    const csv = await app.inject({ method: "GET", url: "/api/exports/snapshot-vms?format=csv", cookies: cookie });
+    expect(csv.statusCode).toBe(200);
+    expect(csv.body).toContain("undated (age unknown)");
+    expect(csv.body).not.toContain("Active VM");
     await app.close();
   });
 

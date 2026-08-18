@@ -62,6 +62,13 @@ export interface SnapshotVmInventoryRow {
   storageAllocatedGiB?: number;
   storageUsedGiB?: number;
   snapshotNames: string[];
+  snapshotDetails: SnapshotInventorySnapshot[];
+}
+
+export interface SnapshotInventorySnapshot {
+  name: string;
+  createdAt?: string;
+  ageDays?: number;
 }
 
 export interface SnapshotHostInventoryRow {
@@ -187,7 +194,7 @@ const inventoryColumns: Array<{ key: keyof SnapshotVmInventoryRow; title: string
   { key: "allocatedRamMiB", title: "Allocated RAM", format: (row) => formatMemory(row.allocatedRamMiB) },
   { key: "storageAllocatedGiB", title: "Storage Allocated GiB" },
   { key: "storageUsedGiB", title: "Storage Used GiB" },
-  { key: "snapshotNames", title: "Snapshots", format: (row) => formatSnapshotNames(row.snapshotNames) },
+  { key: "snapshotNames", title: "Snapshots", format: (row) => formatSnapshotDetails(row.snapshotDetails) },
   { key: "collectedAt", title: "Collected At" }
 ];
 
@@ -398,7 +405,7 @@ function snapshotRows(manager: ManagerRow, snapshot: SnapshotRow): SnapshotVmInv
   const dataCenters = new Map(resources.dataCenters.map((item) => [stringValue(item.id), item]));
   const clusters = new Map(resources.clusters.map((item) => [stringValue(item.id), item]));
   const hosts = new Map(resources.hosts.map((item) => [stringValue(item.id), item]));
-  const snapshotsByVmId = vmSnapshotsByVmId(resources);
+  const snapshotDetailsByVmId = vmSnapshotDetailsByVmId(resources, snapshot.collected_at);
 
   return resources.vms.map((vm) => {
     const vmId = stringValue(vm.id) ?? stringValue(vm.name) ?? "unknown";
@@ -432,7 +439,8 @@ function snapshotRows(manager: ManagerRow, snapshot: SnapshotRow): SnapshotVmInv
       allocatedRamMiB: allocatedRamMiB(vm),
       storageAllocatedGiB: diskTotals.allocated,
       storageUsedGiB: diskTotals.used,
-      snapshotNames: snapshotsByVmId.get(vmId) ?? []
+      snapshotNames: snapshotDetailsByVmId.get(vmId)?.map((item) => item.name) ?? [],
+      snapshotDetails: snapshotDetailsByVmId.get(vmId) ?? []
     };
   });
 }
@@ -928,25 +936,45 @@ function vmIpAddresses(vm: InventoryResource): string[] {
   return uniqueOrderedStrings([...nicIps, ...guestInfoIps].filter(isString));
 }
 
-function vmSnapshotsByVmId(resources: InventoryResources): Map<string, string[]> {
-  const byVmId = new Map<string, string[]>();
+function vmSnapshotDetailsByVmId(resources: InventoryResources, collectedAt: string): Map<string, SnapshotInventorySnapshot[]> {
+  const byVmId = new Map<string, SnapshotInventorySnapshot[]>();
   for (const snapshot of resources.vmSnapshots) {
     const vmId = refId(snapshot.vm) ?? stringValue(snapshot.vm_id) ?? stringValue(snapshot.vmId);
     const name = stringValue(snapshot.name) ?? stringValue(snapshot.description) ?? stringValue(snapshot.id);
-    if (!vmId || !name) {
+    if (!vmId || !name || name.trim().toLowerCase() === "active vm") {
       continue;
     }
     const current = byVmId.get(vmId) ?? [];
-    byVmId.set(vmId, uniqueOrderedStrings([...current, name]));
+    if (current.some((item) => item.name === name)) {
+      continue;
+    }
+    const createdAt = snapshotTimestamp(snapshot.date);
+    const ageDays = snapshotAgeDays(createdAt, collectedAt);
+    current.push({
+      name,
+      ...(createdAt ? { createdAt } : {}),
+      ...(ageDays === undefined ? {} : { ageDays })
+    });
+    byVmId.set(vmId, current);
   }
-  return filterActiveVmSnapshots(byVmId);
+  return byVmId;
 }
 
-function filterActiveVmSnapshots(snapshotsByVmId: Map<string, string[]>): Map<string, string[]> {
-  for (const [vmId, names] of snapshotsByVmId) {
-    snapshotsByVmId.set(vmId, names.filter((name) => name.trim().toLowerCase() !== "active vm"));
+function snapshotTimestamp(value: unknown): string | undefined {
+  const text = stringValue(value);
+  return text && !Number.isNaN(Date.parse(text)) ? text : undefined;
+}
+
+function snapshotAgeDays(createdAt: string | undefined, collectedAt: string): number | undefined {
+  if (!createdAt) {
+    return undefined;
   }
-  return snapshotsByVmId;
+  const createdTimestamp = Date.parse(createdAt);
+  const collectedTimestamp = Date.parse(collectedAt);
+  if (Number.isNaN(createdTimestamp) || Number.isNaN(collectedTimestamp)) {
+    return undefined;
+  }
+  return Math.max(0, Math.floor((collectedTimestamp - createdTimestamp) / 86_400_000));
 }
 
 function vmStorageDomainNames(
@@ -1203,8 +1231,10 @@ function formatMemory(value: number | undefined): string | undefined {
   return `${value.toLocaleString()} MiB (~${formatRoundedGib(gib)} GiB)`;
 }
 
-function formatSnapshotNames(value: string[]): string {
-  return formatNameList(value);
+function formatSnapshotDetails(value: SnapshotInventorySnapshot[]): string {
+  return value.length
+    ? value.map((snapshot) => `${snapshot.name} (${snapshot.ageDays === undefined ? "age unknown" : `${snapshot.ageDays}d`})`).join("; ")
+    : "-";
 }
 
 function formatNameList(value: string[]): string {

@@ -170,6 +170,13 @@ export interface SnapshotVmInventoryRow {
   storageAllocatedGiB?: number;
   storageUsedGiB?: number;
   snapshotNames: string[];
+  snapshotDetails?: SnapshotInventorySnapshot[];
+}
+
+export interface SnapshotInventorySnapshot {
+  name: string;
+  createdAt?: string;
+  ageDays?: number;
 }
 
 export interface SnapshotVmInventoryResponse {
