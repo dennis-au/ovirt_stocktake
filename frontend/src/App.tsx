@@ -28,7 +28,7 @@ import {
   Waypoints,
   XCircle
 } from "lucide-react";
-import { type ChangeEvent, type FormEvent, useEffect, useState } from "react";
+import { type ChangeEvent, type CSSProperties, type FormEvent, useEffect, useState } from "react";
 import {
   collectManager,
   createSavedView,
@@ -768,7 +768,10 @@ export function App() {
           </div>
         </header>
 
-        <main className={`content-shell ${activePage === "inventory" || activePage === "capacity" || activePage === "relationships" ? "inventory-content-shell" : ""}`} aria-labelledby="page-title">
+        <main
+          className={`content-shell ${["dashboard", "cluster", "inventory", "capacity", "relationships"].includes(activePage) ? "operational-content-shell" : ""}`}
+          aria-labelledby="page-title"
+        >
           {authStatus === "checking" && <p className="muted">Checking session</p>}
 
           {authStatus === "ready" && !session.authenticated && (
@@ -1539,6 +1542,9 @@ function InventoryTable({
   sortDirection?: SnapshotVmInventorySortDirection;
 }) {
   const columns = orderedInventoryColumns(columnOrder);
+  const tableStyle: CSSProperties & Record<"--table-min-width", string> = {
+    "--table-min-width": `${Math.max(960, columns.length * 128)}px`
+  };
   return (
     <section className="table-card inventory-table-card" aria-labelledby="inventory-table-title">
       <div className="table-title">
@@ -1546,7 +1552,7 @@ function InventoryTable({
         <span className="table-hint">Drag headers to reorder columns</span>
       </div>
       <div className="table-scroll inventory-table-scroll">
-        <table className="data-table inventory-data-table">
+        <table className="data-table inventory-data-table" style={tableStyle}>
           <thead>
             <tr>
               {columns.map((column) => (

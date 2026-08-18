@@ -340,8 +340,14 @@ button:disabled {
   padding: 24px;
 }
 
-.inventory-content-shell {
+.operational-content-shell {
   width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
+.operational-content-shell > * {
+  min-width: 0;
 }
 
 .eyebrow {
@@ -900,7 +906,7 @@ button:disabled {
 }
 
 .capacity-data-table {
-  min-width: 1060px;
+  --table-min-width: 1060px;
 }
 
 .capacity-resource-link {
@@ -1506,6 +1512,7 @@ select:focus {
 }
 
 .table-card {
+  width: 100%;
   min-width: 0;
   overflow: hidden;
 }
@@ -1538,6 +1545,7 @@ select:focus {
 }
 
 .table-scroll {
+  width: 100%;
   min-width: 0;
   max-width: 100%;
   overflow-x: auto;
@@ -1548,8 +1556,8 @@ select:focus {
 }
 
 .data-table {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  min-width: var(--table-min-width, 100%);
   table-layout: auto;
   border-collapse: collapse;
   color: var(--foreground);
@@ -1557,11 +1565,11 @@ select:focus {
 }
 
 .wide-table {
-  min-width: 1180px;
+  --table-min-width: 1180px;
 }
 
 .adaptive-data-table {
-  min-width: 1080px;
+  --table-min-width: 1080px;
 }
 
 .adaptive-data-table th,
@@ -1578,7 +1586,7 @@ select:focus {
 }
 
 .overview-cluster-data-table {
-  min-width: 1100px;
+  --table-min-width: 1100px;
 }
 
 .overview-cluster-name-column,
@@ -1612,11 +1620,13 @@ select:focus {
 }
 
 .cluster-detail-panel {
+  width: 100%;
+  min-width: 0;
   container-type: inline-size;
 }
 
 .cluster-vm-data-table {
-  min-width: 1180px;
+  --table-min-width: 1180px;
 }
 
 .cluster-vm-name-column,
@@ -1686,7 +1696,7 @@ select:focus {
 }
 
 .extra-wide-table {
-  min-width: 1480px;
+  --table-min-width: 1480px;
 }
 
 .inventory-table-card {
@@ -1698,11 +1708,11 @@ select:focus {
 }
 
 .inventory-data-table {
-  min-width: 960px;
+  --table-min-width: 960px;
 }
 
 .hardware-inventory-data-table {
-  min-width: 1480px;
+  --table-min-width: 1480px;
 }
 
 .hardware-inventory-data-table td {
@@ -1711,7 +1721,7 @@ select:focus {
 }
 
 .relationship-data-table {
-  min-width: 1240px;
+  --table-min-width: 1240px;
 }
 
 .relationship-table-context {
