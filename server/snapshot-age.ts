@@ -1,5 +1,14 @@
 export function snapshotCreatedAt(value: unknown): string | undefined {
-  return typeof value === "string" && value && !Number.isNaN(Date.parse(value)) ? value : undefined;
+  const timestamp = typeof value === "number" ? value : typeof value === "string" && value ? Date.parse(value) : Number.NaN;
+  if (!Number.isFinite(timestamp)) {
+    return undefined;
+  }
+
+  try {
+    return new Date(timestamp).toISOString();
+  } catch {
+    return undefined;
+  }
 }
 
 export function snapshotAgeDaysAt(createdAt: string | undefined, referenceAt: string): number | undefined {

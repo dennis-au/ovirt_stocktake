@@ -206,7 +206,7 @@ function ovirtFetchMock(
 
 function expandedOvirtFetchMock(
   options: {
-    snapshotListDate?: string | null;
+    snapshotListDate?: string | number | null;
     snapshotDetailDate?: string | null;
     snapshotDetailStatus?: number;
     snapshotType?: string;
@@ -494,6 +494,24 @@ describe("oVirt backend collector", () => {
     ]);
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/vms/vm-1/snapshots/snapshot-1"))).toBe(true);
     expect(fetchMock.mock.calls.slice(1).every(([, init]) => init?.method === "GET")).toBe(true);
+  });
+
+  it("uses an epoch-millisecond snapshot list date without a detail request", async () => {
+    const fetchMock = expandedOvirtFetchMock({
+      snapshotListDate: Date.parse("2026-08-10T10:00:00.000Z"),
+      snapshotDetailStatus: 500
+    });
+    const snapshot = await collectOvirtSnapshot(target, { fetchImpl: fetchMock as unknown as typeof fetch });
+
+    expect(snapshot.status).toBe("success");
+    expect(snapshot.resources.vmSnapshots).toEqual([
+      expect.objectContaining({
+        id: "snapshot-1",
+        date: "2026-08-10T10:00:00.000Z",
+        vm: { id: "vm-1", name: "api-01" }
+      })
+    ]);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/vms/vm-1/snapshots/snapshot-1"))).toBe(false);
   });
 
   it("keeps collection evidence when a required snapshot detail request fails", async () => {

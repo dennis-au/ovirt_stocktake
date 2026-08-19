@@ -663,8 +663,12 @@ async function hydrateVmSnapshotDate(
   errors: CollectionIssue[]
 ): Promise<InventoryResource> {
   const snapshotId = nonEmptyString(snapshot.id);
-  if (!snapshotId || isActiveVmSnapshot(snapshot) || snapshotCreatedAt(snapshot.date)) {
+  const listedDate = snapshotCreatedAt(snapshot.date);
+  if (!snapshotId || isActiveVmSnapshot(snapshot)) {
     return snapshot;
+  }
+  if (listedDate) {
+    return { ...snapshot, date: listedDate };
   }
 
   try {
