@@ -78,6 +78,46 @@ export interface SnapshotDetail extends SnapshotSummary {
   errors: SnapshotPayload["errors"];
 }
 
+export type SnapshotDateFinding =
+  | "all_snapshot_dates_available"
+  | "no_vm_snapshots"
+  | "snapshot_dates_missing"
+  | "snapshot_date_values_invalid"
+  | "snapshot_detail_requests_failed"
+  | "snapshot_detail_responses_missing_date"
+  | "snapshot_list_requests_failed";
+
+export interface SnapshotAgeDiagnosticRun {
+  collectedAt: string;
+  apiVersion: string;
+  durationMs: number;
+  status: SnapshotStatus;
+  regularSnapshotCount: number;
+  activeSnapshotCount: number;
+  validDateCount: number;
+  missingDateCount: number;
+  invalidDateCount: number;
+  observedTemporalFields: Partial<Record<"date" | "creation_date" | "creationDate" | "created_at" | "createdAt" | "creation_time" | "creationTime", number>>;
+  snapshotDateIssueCounts: {
+    noCreationDate: number;
+    detailCollectionFailed: number;
+    listCollectionFailed: number;
+    other: number;
+  };
+  findings: SnapshotDateFinding[];
+}
+
+export interface SnapshotAgeDiagnostics {
+  reportVersion: 1;
+  generatedAt: string;
+  managerCount: number;
+  managers: Array<{
+    label: string;
+    enabled: boolean;
+    latestInventoryRun?: SnapshotAgeDiagnosticRun;
+  }>;
+}
+
 export interface DashboardResponse {
   totals: {
     managers: number;
@@ -481,6 +521,15 @@ export async function listSnapshots(managerId?: string): Promise<SnapshotSummary
 export async function getSnapshot(id: string): Promise<SnapshotDetail> {
   const response = await fetch(`/api/snapshots/${encodeURIComponent(id)}`);
   return snapshotFromResponse(response);
+}
+
+export async function getSnapshotAgeDiagnostics(): Promise<SnapshotAgeDiagnostics> {
+  const response = await fetch("/api/diagnostics/snapshot-age");
+  const body = (await response.json().catch(() => undefined)) as { diagnostics?: SnapshotAgeDiagnostics; error?: string } | undefined;
+  if (!response.ok || !body?.diagnostics) {
+    throw new Error(body?.error ?? `Diagnostics request failed with HTTP ${response.status}`);
+  }
+  return body.diagnostics;
 }
 
 export async function getDashboard(): Promise<DashboardResponse> {

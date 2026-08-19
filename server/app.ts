@@ -10,6 +10,7 @@ import { registerCollectionRunRoutes } from "./collection-runs.js";
 import { registerCollectionRoutes } from "./collection.js";
 import type { AppConfig } from "./config.js";
 import { registerDashboardRoutes } from "./dashboard.js";
+import { registerDiagnosticRoutes } from "./diagnostics.js";
 import { databaseHealth, type SqliteDatabase } from "./db.js";
 import { createDurableScheduler, schedulerAvailable, type DurableScheduler } from "./durable-scheduler.js";
 import { registerExceptionRoutes } from "./exceptions.js";
@@ -53,6 +54,7 @@ export function buildApp({ db, config, inventoryDb }: BuildAppOptions): FastifyI
   registerCollectionRunRoutes(app, inventoryDb);
   registerSnapshotRoutes(app, db);
   registerDashboardRoutes(app, db);
+  registerDiagnosticRoutes(app, db);
   registerExcelRoutes(app, db);
   registerInventoryRoutes(app, inventoryDb);
   registerSnapshotInventoryRoutes(app, db);

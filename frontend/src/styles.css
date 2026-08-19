@@ -367,9 +367,107 @@ button:disabled {
 .relationships-panel,
 .capacity-panel,
 .settings-panel,
+.diagnostics-panel,
 .cluster-detail-panel {
   display: grid;
   gap: 14px;
+}
+
+.diagnostics-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.diagnostic-run-list {
+  display: grid;
+  gap: 12px;
+}
+
+.diagnostic-run {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--card);
+  padding: 16px;
+  box-shadow: var(--surface-shadow);
+}
+
+.diagnostic-run-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.diagnostic-run h3,
+.diagnostic-run p {
+  margin: 0;
+}
+
+.diagnostic-run h3 {
+  color: var(--foreground);
+  font-size: 0.96rem;
+}
+
+.diagnostic-run p {
+  margin-top: 3px;
+  color: var(--muted-foreground);
+  font-size: 0.84rem;
+}
+
+.diagnostic-values {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.diagnostic-values div {
+  min-width: 0;
+}
+
+.diagnostic-values dt {
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.diagnostic-values dd {
+  margin: 4px 0 0;
+  color: var(--foreground);
+  font-size: 0.88rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.diagnostic-findings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.diagnostics-report-label {
+  color: var(--foreground);
+  font-size: 0.84rem;
+  font-weight: 750;
+}
+
+.diagnostics-report {
+  width: 100%;
+  min-height: 260px;
+  resize: vertical;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  padding: 12px;
 }
 
 .capacity-toolbar {
@@ -2227,6 +2325,10 @@ select:focus {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .diagnostic-values {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .relationship-builder-shell {
     grid-template-columns: 220px minmax(0, 1fr);
   }
@@ -2344,6 +2446,10 @@ select:focus {
     grid-template-columns: repeat(2, minmax(150px, 1fr));
   }
 
+  .diagnostics-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .capacity-chart-grid {
     grid-template-columns: 1fr;
   }
@@ -2416,6 +2522,11 @@ select:focus {
   }
 
   .capacity-cluster-allocation {
+    grid-template-columns: 1fr;
+  }
+
+  .diagnostics-summary,
+  .diagnostic-values {
     grid-template-columns: 1fr;
   }
 

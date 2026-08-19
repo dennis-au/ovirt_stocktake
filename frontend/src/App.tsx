@@ -79,8 +79,9 @@ import appPackage from "../../package.json";
 import { RelationshipReportBuilder } from "./RelationshipReportBuilder";
 import { CapacityPage } from "./CapacityPage";
 import { collectManagersSequentially } from "./manager-collection";
+import { SnapshotAgeDiagnosticsPage } from "./SnapshotAgeDiagnosticsPage";
 
-type PageId = "dashboard" | "inventory" | "capacity" | "relationships" | "managers" | "history" | "settings" | "cluster";
+type PageId = "dashboard" | "inventory" | "capacity" | "relationships" | "managers" | "history" | "settings" | "diagnostics" | "cluster";
 type SnapshotFilters = { managerId: string; status: string };
 type InventoryView = "vms" | "hardware";
 type InventoryColumnKey =
@@ -135,6 +136,7 @@ const pageTitles: Record<PageId, string> = {
   managers: "Managers",
   history: "Snapshot History",
   settings: "Settings",
+  diagnostics: "Diagnostics",
   cluster: "Cluster Detail"
 };
 
@@ -740,6 +742,12 @@ export function App() {
               <Settings aria-hidden="true" size={17} />
               Settings
             </a>
+            {session.user?.role === "admin" && (
+              <a href="#diagnostics" aria-current={activePage === "diagnostics" ? "page" : undefined}>
+                <Activity aria-hidden="true" size={17} />
+                Diagnostics
+              </a>
+            )}
           </div>
         </nav>
       </aside>
@@ -1176,6 +1184,8 @@ export function App() {
               )}
             </section>
           )}
+
+          {session.authenticated && activePage === "diagnostics" && <SnapshotAgeDiagnosticsPage />}
 
           {session.authenticated && activePage === "managers" && (
             <section className="manager-panel" aria-labelledby="managers">
@@ -2012,6 +2022,9 @@ function pageFromHash(): PageId {
   }
   if (hash === "settings") {
     return "settings";
+  }
+  if (hash === "diagnostics") {
+    return "diagnostics";
   }
   return "dashboard";
 }
