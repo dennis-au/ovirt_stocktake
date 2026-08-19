@@ -103,6 +103,7 @@ function ovirtFetchMock(
     hostList?: Record<string, unknown> | Array<Record<string, unknown>>;
     hostDetail?: Record<string, unknown>;
     hostDetails?: Record<string, Record<string, unknown>>;
+    hostDetailResponse?: "direct" | "wrapped";
     hostDetailStatus?: number;
     hostDetailDelayMs?: number;
     onHostDetailStart?: () => void;
@@ -140,10 +141,8 @@ function ovirtFetchMock(
           await new Promise((resolve) => setTimeout(resolve, options.hostDetailDelayMs));
         }
         const hostId = decodeURIComponent(hostDetailMatch[1]!);
-        return jsonResponse({
-          host:
-            options.hostDetails?.[hostId] ?? options.hostDetail ?? { id: hostId, name: hostId }
-        });
+        const host = options.hostDetails?.[hostId] ?? options.hostDetail ?? { id: hostId, name: hostId };
+        return jsonResponse(options.hostDetailResponse === "direct" ? host : { host });
       } finally {
         options.onHostDetailEnd?.();
       }
@@ -377,7 +376,7 @@ describe("oVirt backend collector", () => {
     );
   });
 
-  it("keeps the host and warns when host detail does not expose certificate expiry", async () => {
+  it("keeps the host and warns when a direct all-content host response does not expose certificate expiry", async () => {
     const fetchMock = ovirtFetchMock({
       hostList: {
         id: "host-1",
@@ -389,7 +388,8 @@ describe("oVirt backend collector", () => {
         id: "host-1",
         name: "host-1",
         certificate: { subject: "CN=host-1", organization: "Example" }
-      }
+      },
+      hostDetailResponse: "direct"
     });
 
     const snapshot = await collectOvirtSnapshot(target, { fetchImpl: fetchMock as unknown as typeof fetch });
@@ -402,6 +402,8 @@ describe("oVirt backend collector", () => {
         expect.objectContaining({ resource: "hosts", message: expect.stringContaining("certificate expiry is unavailable") })
       ])
     );
+    const detailRequest = fetchMock.mock.calls.find(([input]) => String(input).includes("/hosts/host-1"));
+    expect(new URL(String(detailRequest?.[0])).searchParams.get("all_content")).toBe("true");
   });
 
   it("limits concurrent host certificate lookups", async () => {

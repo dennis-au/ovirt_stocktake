@@ -59,6 +59,7 @@ const failureLabels: Record<DiagnosticFailureCategory, string> = {
   timeout: "timeout",
   http_4xx: "HTTP 4xx",
   http_5xx: "HTTP 5xx",
+  invalid_response: "invalid response",
   missing_data: "missing data",
   other: "other"
 };

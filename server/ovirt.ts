@@ -633,7 +633,14 @@ async function hydrateHostCertificateExpiry(
     }
 
     try {
-      const detail = await getResourcePath(fetchImpl, managerUrl, `hosts/${encodeURIComponent(hostId)}`, "host", authorization, options);
+      const detail = await getResourcePath(
+        fetchImpl,
+        managerUrl,
+        `hosts/${encodeURIComponent(hostId)}?all_content=true`,
+        "host",
+        authorization,
+        options
+      );
       const certificateExpiresAt = certificateExpiresAtFromHost(detail);
       if (certificateExpiresAt) {
         return { ...host, certificateExpiresAt };
@@ -711,11 +718,7 @@ async function getResourcePath(
       Authorization: authorization
     }
   });
-  const rows = collectionItems(payload, itemKey);
-  if (rows.length !== 1) {
-    throw new Error("oVirt returned an invalid resource response");
-  }
-  return rows[0];
+  return resourceItem(payload, itemKey);
 }
 
 async function getJson(fetchImpl: typeof fetch, url: URL, options: OvirtCollectorOptions, init: OvirtRequestInit): Promise<unknown> {
@@ -837,6 +840,17 @@ function collectionItems(payload: unknown, itemKey: string): InventoryResource[]
   }
 
   throw new Error("oVirt returned an invalid collection response");
+}
+
+function resourceItem(payload: unknown, itemKey: string): InventoryResource {
+  const rows = collectionItems(payload, itemKey);
+  if (rows.length === 1) {
+    return rows[0];
+  }
+  if (rows.length > 1 || !isResource(payload) || !nonEmptyString(payload.id)) {
+    throw new Error("oVirt returned an invalid resource response");
+  }
+  return payload;
 }
 
 function isResource(value: unknown): value is InventoryResource {

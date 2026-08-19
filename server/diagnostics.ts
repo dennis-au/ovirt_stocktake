@@ -58,7 +58,7 @@ type DiagnosticIssueOperation =
   | "snapshot_date"
   | "guest_agent"
   | "collection";
-type DiagnosticFailureCategory = "authentication" | "network_tls" | "timeout" | "http_4xx" | "http_5xx" | "missing_data" | "other";
+type DiagnosticFailureCategory = "authentication" | "network_tls" | "timeout" | "http_4xx" | "http_5xx" | "invalid_response" | "missing_data" | "other";
 
 interface DiagnosticResourceState {
   resource: ResourceKey;
@@ -273,6 +273,9 @@ function diagnosticFailureCategory(message: string): DiagnosticFailureCategory {
   }
   if (statusClass === "5xx") {
     return "http_5xx";
+  }
+  if (normalized.includes("invalid json response") || normalized.includes("invalid resource response") || normalized.includes("invalid collection response")) {
+    return "invalid_response";
   }
   if (normalized.includes("unavailable") || normalized.includes("no creation date") || normalized.includes("no guest-agent data")) {
     return "missing_data";

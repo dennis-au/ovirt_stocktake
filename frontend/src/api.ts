@@ -101,7 +101,7 @@ export type DiagnosticIssueOperation =
   | "snapshot_date"
   | "guest_agent"
   | "collection";
-export type DiagnosticFailureCategory = "authentication" | "network_tls" | "timeout" | "http_4xx" | "http_5xx" | "missing_data" | "other";
+export type DiagnosticFailureCategory = "authentication" | "network_tls" | "timeout" | "http_4xx" | "http_5xx" | "invalid_response" | "missing_data" | "other";
 
 export interface DiagnosticResourceState {
   resource: keyof InventoryResources;

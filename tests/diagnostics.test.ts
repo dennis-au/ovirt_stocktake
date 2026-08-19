@@ -262,6 +262,44 @@ describe("snapshot age diagnostics", () => {
     await app.close();
   });
 
+  it("classifies invalid host detail responses without exposing upstream details", async () => {
+    const { app, cookie } = await authenticatedApp();
+    const managerId = await createManager(app, cookie);
+    const payload = snapshot(managerId);
+    payload.warnings = [];
+    payload.errors = [{ resource: "hosts", message: "private-host certificate detail collection failed: oVirt returned an invalid resource response" }];
+
+    const saved = await app.inject({ method: "POST", url: "/api/snapshots", cookies: cookie, payload });
+    expect(saved.statusCode).toBe(201);
+
+    const response = await app.inject({ method: "GET", url: "/api/diagnostics/snapshot-age", cookies: cookie });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      diagnostics: {
+        managers: [
+          {
+            latestInventoryRun: {
+              issueFingerprints: [
+                {
+                  fingerprint: "error:hosts:host_certificate_detail:invalid_response",
+                  severity: "error",
+                  resource: "hosts",
+                  operation: "host_certificate_detail",
+                  failureCategory: "invalid_response",
+                  count: 1
+                }
+              ]
+            }
+          }
+        ]
+      }
+    });
+    expect(response.body).not.toContain("private-host");
+    expect(response.body).not.toContain("invalid resource response");
+    await app.close();
+  });
+
   it("reports the latest failed collection without changing its status", async () => {
     const { app, cookie } = await authenticatedApp();
     const managerId = await createManager(app, cookie);
