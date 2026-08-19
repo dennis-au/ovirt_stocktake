@@ -80,6 +80,7 @@ export interface SnapshotDetail extends SnapshotSummary {
 
 export type SnapshotDateFinding =
   | "all_snapshot_dates_available"
+  | "no_inventory_snapshot"
   | "no_vm_snapshots"
   | "snapshot_dates_missing"
   | "snapshot_date_values_invalid"
@@ -87,11 +88,50 @@ export type SnapshotDateFinding =
   | "snapshot_detail_responses_missing_date"
   | "snapshot_list_requests_failed";
 
+export type DiagnosticResource = keyof InventoryResources | "general";
+export type ResourceCollectionState = "collected" | "empty" | "partial" | "failed";
+export type DiagnosticIssueSeverity = "warning" | "error";
+export type DiagnosticIssueOperation =
+  | "resource_list"
+  | "child_collection"
+  | "host_certificate_detail"
+  | "host_certificate_expiry"
+  | "snapshot_list"
+  | "snapshot_detail"
+  | "snapshot_date"
+  | "guest_agent"
+  | "collection";
+export type DiagnosticFailureCategory = "authentication" | "network_tls" | "timeout" | "http_4xx" | "http_5xx" | "missing_data" | "other";
+
+export interface DiagnosticResourceState {
+  resource: keyof InventoryResources;
+  recordCount: number;
+  state: ResourceCollectionState;
+  warningCount: number;
+  errorCount: number;
+}
+
+export interface DiagnosticIssueFingerprint {
+  fingerprint: string;
+  severity: DiagnosticIssueSeverity;
+  resource: DiagnosticResource;
+  operation: DiagnosticIssueOperation;
+  failureCategory: DiagnosticFailureCategory;
+  httpStatusClass?: "4xx" | "5xx";
+  count: number;
+}
+
 export interface SnapshotAgeDiagnosticRun {
   collectedAt: string;
   apiVersion: string;
   durationMs: number;
   status: SnapshotStatus;
+  warningCount: number;
+  errorCount: number;
+  populatedResourceCount: number;
+  totalResourceCount: number;
+  resourceStates: DiagnosticResourceState[];
+  issueFingerprints: DiagnosticIssueFingerprint[];
   regularSnapshotCount: number;
   activeSnapshotCount: number;
   validDateCount: number;
@@ -108,7 +148,7 @@ export interface SnapshotAgeDiagnosticRun {
 }
 
 export interface SnapshotAgeDiagnostics {
-  reportVersion: 1;
+  reportVersion: 2;
   generatedAt: string;
   managerCount: number;
   managers: Array<{

@@ -379,6 +379,124 @@ button:disabled {
   gap: 12px;
 }
 
+.diagnostic-heading-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  background: var(--secondary);
+  color: var(--primary);
+}
+
+.diagnostics-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.diagnostics-summary .metric {
+  display: grid;
+  align-content: center;
+  align-items: start;
+  gap: 2px;
+}
+
+.diagnostics-summary .metric > span,
+.diagnostics-summary .metric > small {
+  color: var(--muted-foreground);
+}
+
+.diagnostics-summary .metric > span {
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.diagnostics-summary .metric > small {
+  font-size: 0.72rem;
+}
+
+.diagnostics-date-summary {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--card);
+  padding: 16px;
+  box-shadow: var(--surface-shadow);
+}
+
+.diagnostic-evidence-section {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border-top: 1px solid var(--hairline);
+  padding-top: 14px;
+}
+
+.diagnostic-subheading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.diagnostic-subheading.compact {
+  align-items: center;
+}
+
+.diagnostic-subheading h3,
+.diagnostic-subheading h4,
+.diagnostic-subheading p {
+  margin: 0;
+}
+
+.diagnostic-subheading h3 {
+  color: var(--foreground);
+  font-size: 0.98rem;
+}
+
+.diagnostic-subheading h4 {
+  color: var(--foreground);
+  font-size: 0.9rem;
+}
+
+.diagnostic-subheading p {
+  margin-top: 3px;
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+}
+
+.diagnostics-date-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.diagnostics-date-grid div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border-left: 3px solid var(--hairline);
+  padding: 4px 0 4px 10px;
+}
+
+.diagnostics-date-grid span {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.diagnostics-date-grid strong {
+  color: var(--foreground);
+  font-size: 1.05rem;
+}
+
 .diagnostic-run-list {
   display: grid;
   gap: 12px;
@@ -392,6 +510,56 @@ button:disabled {
   background: var(--card);
   padding: 16px;
   box-shadow: var(--surface-shadow);
+}
+
+.diagnostic-table-scroll {
+  --table-min-width: 720px;
+}
+
+.diagnostic-resource-table th,
+.diagnostic-resource-table td {
+  padding: 9px 10px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.diagnostic-resource-table th[scope="row"] {
+  font-weight: 700;
+}
+
+.diagnostic-resource-table .state-pill {
+  min-width: 74px;
+}
+
+.diagnostic-fingerprint-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diagnostic-fingerprint-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--foreground);
+  font-size: 0.82rem;
+}
+
+.diagnostic-fingerprint-list li > span:nth-child(2) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.diagnostic-fingerprint-list strong {
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
 }
 
 .diagnostic-run-heading {
@@ -2329,6 +2497,10 @@ select:focus {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .diagnostics-date-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .relationship-builder-shell {
     grid-template-columns: 220px minmax(0, 1fr);
   }
@@ -2450,6 +2622,10 @@ select:focus {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .diagnostics-date-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .capacity-chart-grid {
     grid-template-columns: 1fr;
   }
@@ -2526,8 +2702,25 @@ select:focus {
   }
 
   .diagnostics-summary,
-  .diagnostic-values {
+  .diagnostic-values,
+  .diagnostics-date-grid {
     grid-template-columns: 1fr;
+  }
+
+  .diagnostics-actions {
+    justify-content: stretch;
+  }
+
+  .diagnostics-actions .button {
+    flex: 1 1 180px;
+  }
+
+  .diagnostic-fingerprint-list li {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .diagnostic-fingerprint-list strong {
+    grid-column: 2;
   }
 
   .capacity-chart {

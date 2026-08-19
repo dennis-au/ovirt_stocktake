@@ -107,6 +107,67 @@ This plan supersedes the snapshot-only implementation plan. Existing working beh
 
 Acceptance note: lab collection succeeded with redacted evidence. The lab currently returned zero VMs, so live VM-detail drilling is covered by automated seeded-data tests and will be rechecked against lab data when VMs are present.
 
+## Milestone 10A: Collection Diagnostics Evidence Expansion [ ]
+
+Improve the admin-only Diagnostics page so production users can provide enough redacted evidence to identify the remaining causes of `partial` inventory runs. This milestone is diagnostic-only and must not change collection status rules or collector behavior.
+
+### Scope
+
+- Keep the existing Snapshot Age Diagnostics route and admin-only access control.
+- Add per-Manager totals for collection status, warning count, error count, populated resource count, and latest collection duration/API version.
+- Add redacted error and warning counts grouped by resource category, including top-level resources, hosts, VM snapshots, affinity groups, and other child collections.
+- Distinguish snapshot-list failures, snapshot-detail failures, host certificate-detail failures, missing certificate expiry, authentication failures, TLS/network failures, timeout failures, HTTP 4xx failures, HTTP 5xx failures, and other failures where the stored evidence supports that classification.
+- Show whether each category was collected, empty, partially collected, or failed, without exposing manager names, Manager URLs, VM names, snapshot names, credentials, tokens, authorization headers, or raw API payloads.
+- Include redacted issue samples or stable issue fingerprints with resource category, failure category, HTTP status class when known, and count. Do not include free-form upstream error text unless it has passed explicit redaction.
+- Add a reliable report handoff path: Clipboard API when available, a textarea-selection fallback when it is unavailable or denied, and a downloadable redacted JSON report as a final fallback.
+- Show clear copy/download success and failure states and preserve the report in a selectable field.
+- Keep the current snapshot-date normalization behavior and display valid snapshot-date counts separately from unrelated collection errors.
+
+### Explicitly Deferred
+
+- Do not change the definition of `success`, `partial`, or `failed`.
+- Do not downgrade host certificate-detail errors from errors to warnings.
+- Do not change host certificate API calls, snapshot collection, retry behavior, scheduler behavior, database schema, or Compose packaging.
+- Do not infer a root cause from the current report until the expanded report provides resource-level evidence.
+
+### Implementation Phases
+
+#### Phase 1: Diagnostic Contract
+
+- [x] Define a versioned redacted diagnostics response containing collection totals, per-resource state, categorized issue counts, and safe issue fingerprints.
+- [x] Add server-side redaction and classification tests for known issue messages and unknown/malformed issue values.
+- [x] Confirm the response cannot contain Manager names/URLs, VM names, snapshot names, credentials, tokens, authorization headers, or raw payloads.
+
+**Checkpoint:** An admin can request a complete report that identifies which resource category caused a partial run without exposing sensitive inventory details.
+
+#### Phase 2: Diagnostics Page Evidence UI
+
+- [x] Add per-Manager resource status rows and grouped issue counts to the Diagnostics page.
+- [x] Display total errors separately from snapshot-date issues so valid snapshot dates do not imply a successful full collection.
+- [x] Display collection time, API version, duration, status, and redacted category counts in a layout that remains readable at desktop and mobile widths.
+- [x] Keep empty, unavailable, partial, and error states visually distinct.
+
+**Checkpoint:** The user can paste one report that shows whether the remaining errors are from hosts, certificates, top-level lists, child resources, network/TLS, authentication, or another category.
+
+#### Phase 3: Report Handoff
+
+- [x] Keep Clipboard API copy as the preferred path.
+- [x] Add a browser-compatible text-selection fallback when clipboard permissions are unavailable.
+- [x] Add a download fallback for the redacted JSON report.
+- [ ] Add browser tests for successful copy, denied/unavailable Clipboard API, selection fallback, download action, and no secret leakage.
+
+**Checkpoint:** The report can be handed off from production even when the browser blocks direct clipboard access.
+
+### Validation Plan
+
+- [x] Unit-test issue categorization, per-resource aggregation, redaction, report versioning, and stable fingerprints.
+- [x] API-test admin access, report generation, empty/partial/failed collection evidence, and secret exclusion.
+- [ ] Browser-test Diagnostics at desktop and mobile widths, refresh behavior, selectable report text, Clipboard API fallback, download fallback, and no page-level horizontal overflow.
+- [x] Run `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build`.
+- [ ] Manually collect from `https://lab111/ovirt-engine/` only if credentials are supplied out of band; paste only the redacted report into the next troubleshooting step.
+
+**Done when:** The Diagnostics page provides enough redacted per-resource evidence to identify the remaining partial-collection cause, and the report can be copied or downloaded in browser environments that deny clipboard access. No partial-status or collector behavior has changed.
+
 ## Milestone 11: Durable PostgreSQL Job Scheduler [ ]
 
 Replace the process-local `setInterval` inventory and metrics schedulers with a durable PostgreSQL-backed job system. The selected module is [pg-boss](https://pgboss.io/), using the PostgreSQL service already required by the Compose deployment. The target version must be verified at implementation time; the reviewed baseline is pg-boss 12.x, which requires Node.js 22.12+ and PostgreSQL 13+.
