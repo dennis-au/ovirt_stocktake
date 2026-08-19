@@ -1,6 +1,13 @@
 import { newDb } from "pg-mem";
 import { describe, expect, it } from "vitest";
-import { claimDueSchedule, listScheduleStates, synchronizeScheduleStates, type ScheduleDefinition } from "../server/scheduler-state.js";
+import {
+  claimDueSchedule,
+  getSchedulerReconcilerState,
+  listScheduleStates,
+  recordSchedulerReconcilerPoll,
+  synchronizeScheduleStates,
+  type ScheduleDefinition
+} from "../server/scheduler-state.js";
 import { migratePostgres, type PostgresQueryable } from "../server/postgres/migrate.js";
 
 async function memoryPostgres() {
@@ -60,6 +67,25 @@ describe("durable scheduler state", () => {
     expect(states.find((state) => state.jobType === "inventory")?.intervalMinutes).toBe(30);
     expect(states.find((state) => state.jobType === "metrics")?.enabled).toBe(false);
     expect(states.find((state) => state.jobType === "metrics")?.nextRunAt).toBeUndefined();
+    await db.end();
+  });
+
+  it("persists reconciler polling success and the most recent failure", async () => {
+    const db = await memoryPostgres();
+
+    await recordSchedulerReconcilerPoll(db, true);
+    expect(await getSchedulerReconcilerState(db)).toMatchObject({
+      lastPolledAt: expect.any(String),
+      lastSuccessfulPollAt: expect.any(String)
+    });
+
+    await recordSchedulerReconcilerPoll(db, false, "PostgreSQL connection lost");
+    expect(await getSchedulerReconcilerState(db)).toMatchObject({
+      lastPolledAt: expect.any(String),
+      lastSuccessfulPollAt: expect.any(String),
+      lastErrorAt: expect.any(String),
+      lastErrorSummary: "PostgreSQL connection lost"
+    });
     await db.end();
   });
 });

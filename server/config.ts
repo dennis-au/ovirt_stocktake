@@ -14,7 +14,6 @@ export interface AppConfig {
   auth: AuthConfig;
   postgres: PostgresConfig;
   metrics: MetricsConfig;
-  scheduler: SchedulerConfig;
   collector: CollectorConfig;
   credentialEncryptionKey?: string;
   ovirtAllowInsecureTls: boolean;
@@ -37,10 +36,6 @@ export interface PostgresConfig {
 export interface MetricsConfig {
   backend: "none" | "postgres" | "timescale" | "timescaledb" | "prometheus" | "victoriametrics" | "grafana";
   url?: string;
-}
-
-export interface SchedulerConfig {
-  workerConcurrency: number;
 }
 
 export interface CollectorConfig {
@@ -102,12 +97,6 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
   const metricsSyncMinutes = parsePositiveInteger(environment.OVIRT_INVENTORY_METRICS_SYNC_MINUTES ?? "5", "OVIRT_INVENTORY_METRICS_SYNC_MINUTES");
   const backupSyncMinutes = parsePositiveInteger(environment.OVIRT_INVENTORY_BACKUP_SYNC_MINUTES ?? "60", "OVIRT_INVENTORY_BACKUP_SYNC_MINUTES");
   const fullSnapshotHour = parseHour(environment.OVIRT_INVENTORY_FULL_SNAPSHOT_HOUR ?? "2");
-  const schedulerWorkerConcurrency = parseBoundedPositiveInteger(
-    environment.OVIRT_INVENTORY_SCHEDULER_WORKER_CONCURRENCY ?? "2",
-    "OVIRT_INVENTORY_SCHEDULER_WORKER_CONCURRENCY",
-    16
-  );
-
   mkdirSync(dirname(databasePath), { recursive: true });
 
   return {
@@ -124,9 +113,6 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     metrics: {
       backend: metricsBackend,
       url: environment.OVIRT_INVENTORY_METRICS_URL || undefined
-    },
-    scheduler: {
-      workerConcurrency: schedulerWorkerConcurrency
     },
     collector: {
       enabled: collectorEnabled,
@@ -190,14 +176,6 @@ function parsePositiveInteger(value: string, name: string): number {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be greater than zero`);
-  }
-  return parsed;
-}
-
-function parseBoundedPositiveInteger(value: string, name: string, max: number): number {
-  const parsed = parsePositiveInteger(value, name);
-  if (parsed > max) {
-    throw new Error(`${name} must be from 1 to ${max}`);
   }
   return parsed;
 }

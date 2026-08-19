@@ -253,7 +253,19 @@ export function App() {
     if (session.authenticated && activePage === "settings") {
       void loadSettings();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, session.authenticated]);
+
+  useEffect(() => {
+    if (!session.authenticated || activePage !== "settings" || session.user?.role !== "admin") {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void loadSchedulerStatus();
+    }, 30_000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, session.authenticated, session.user?.role]);
 
   useEffect(() => {
     if (session.authenticated && activePage === "relationships") {
@@ -392,20 +404,25 @@ export function App() {
     setSchedulerError("");
     try {
       setSettings(await getSettings());
-      if (session.user?.role === "admin") {
-        try {
-          setSchedulerStatus(await getScheduler());
-        } catch (error) {
-          setSchedulerStatus(undefined);
-          setSchedulerError(error instanceof Error ? error.message : "Scheduler status failed");
-        }
-      } else {
-        setSchedulerStatus(undefined);
-      }
+      await loadSchedulerStatus();
     } catch (error) {
       setSettingsError(error instanceof Error ? error.message : "Settings failed");
     } finally {
       setSettingsLoading(false);
+    }
+  }
+
+  async function loadSchedulerStatus() {
+    if (session.user?.role !== "admin") {
+      setSchedulerStatus(undefined);
+      return;
+    }
+    try {
+      setSchedulerStatus(await getScheduler());
+      setSchedulerError("");
+    } catch (error) {
+      setSchedulerStatus(undefined);
+      setSchedulerError(error instanceof Error ? error.message : "Scheduler status failed");
     }
   }
 
@@ -424,6 +441,7 @@ export function App() {
         metricsIntervalMinutes: Number(form.get("metricsIntervalMinutes"))
       });
       setSettings(saved);
+      await loadSchedulerStatus();
       setSettingsMessage("Settings saved");
     } catch (error) {
       setSettingsError(error instanceof Error ? error.message : "Settings save failed");
@@ -1862,6 +1880,7 @@ function hostInventoryStatusClass(status: string | undefined) {
 function SchedulerStatusSummary({ scheduler }: { scheduler: SchedulerResponse }) {
   const inventory = scheduler.schedules.find((schedule) => schedule.jobType === "inventory");
   const metrics = scheduler.schedules.find((schedule) => schedule.jobType === "metrics");
+  const heartbeatOverdue = isOverdue(scheduler.scheduler.lastSuccessfulPollAt, 90_000);
 
   return (
     <section className="settings-scheduler-summary" aria-label="Scheduler status">
@@ -1870,7 +1889,12 @@ function SchedulerStatusSummary({ scheduler }: { scheduler: SchedulerResponse })
         <span className={`state-pill ${scheduler.scheduler.running ? "status-success" : "status-danger"}`}>
           {scheduler.scheduler.running ? "Scheduler running" : "Scheduler stopped"}
         </span>
-        {scheduler.scheduler.lastErrorAt && <span className="state-pill status-warning">Worker issue: {formatHongKongDateTime(scheduler.scheduler.lastErrorAt)}</span>}
+        {scheduler.scheduler.lastSuccessfulPollAt && (
+          <span className={`state-pill ${heartbeatOverdue ? "status-danger" : "status-success"}`}>
+            {heartbeatOverdue ? "Scheduler heartbeat overdue" : "Scheduler checked"}: {formatHongKongDateTime(scheduler.scheduler.lastSuccessfulPollAt)}
+          </span>
+        )}
+        {scheduler.scheduler.lastErrorAt && <span className="state-pill status-warning">Scheduler check needs attention: {formatHongKongDateTime(scheduler.scheduler.lastErrorAt)}</span>}
         <ScheduleStatusPill label="Inventory" schedule={inventory} />
         <ScheduleStatusPill label="Metrics" schedule={metrics} />
       </div>
@@ -1882,6 +1906,9 @@ function ScheduleStatusPill({ label, schedule }: { label: string; schedule: Sche
   if (!schedule || !schedule.enabled) {
     return <span className="state-pill status-muted">{label}: disabled</span>;
   }
+  if (isOverdue(schedule.nextRunAt)) {
+    return <span className="state-pill status-danger">{label}: overdue since {formatHongKongDateTime(schedule.nextRunAt!)}</span>;
+  }
   if (schedule.lastResult === "failed") {
     return <span className="state-pill status-danger">{label}: failed, next {schedule.nextRunAt ? formatHongKongDateTime(schedule.nextRunAt) : "pending"}</span>;
   }
@@ -1889,6 +1916,14 @@ function ScheduleStatusPill({ label, schedule }: { label: string; schedule: Sche
     return <span className="state-pill status-warning">{label}: partial, next {schedule.nextRunAt ? formatHongKongDateTime(schedule.nextRunAt) : "pending"}</span>;
   }
   return <span className="state-pill status-success">{label}: next {schedule.nextRunAt ? formatHongKongDateTime(schedule.nextRunAt) : "pending"}</span>;
+}
+
+function isOverdue(timestamp: string | undefined, graceMs = 0): boolean {
+  if (!timestamp) {
+    return false;
+  }
+  const value = Date.parse(timestamp);
+  return Number.isFinite(value) && value + graceMs < Date.now();
 }
 
 function formatHostWorkload(host: SnapshotHostInventoryResponse["rows"][number]) {

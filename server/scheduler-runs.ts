@@ -14,6 +14,7 @@ interface SchedulerDispatchRunRow {
   started_at: Date | string | null;
   completed_at: Date | string | null;
   error_summary: string | null;
+  heartbeat_at: Date | string | null;
   created_at: Date | string;
 }
 
@@ -36,13 +37,6 @@ export interface SchedulerDispatchRun {
   completedAt?: string;
   errorSummary?: string;
   createdAt: string;
-}
-
-export interface StaleSchedulerRunJob {
-  runId: string;
-  jobType: ScheduledJobType;
-  managerId: string;
-  queueJobId?: string;
 }
 
 export async function createSchedulerRun(
@@ -87,7 +81,7 @@ export async function recoverStaleSchedulerRuns(
     `SELECT id
      FROM scheduler_dispatch_runs
      WHERE completed_at IS NULL
-       AND created_at < $1
+       AND COALESCE(heartbeat_at, started_at, created_at) < $1
      ORDER BY created_at, id`,
     [cutoff]
   );
@@ -113,44 +107,6 @@ export async function recoverStaleSchedulerRuns(
   return recovered;
 }
 
-export async function listStaleSchedulerRunJobs(
-  db: PostgresQueryable,
-  now = new Date(),
-  staleAfterMs = 20 * 60_000
-): Promise<StaleSchedulerRunJob[]> {
-  const cutoff = new Date(now.getTime() - staleAfterMs).toISOString();
-  const result = await db.query<{
-    run_id: string;
-    job_type: ScheduledJobType;
-    manager_id: string;
-    queue_job_id: string | null;
-  }>(
-    `SELECT run.id AS run_id, run.job_type, manager.manager_id, manager.queue_job_id
-     FROM scheduler_dispatch_runs run
-     JOIN scheduler_dispatch_run_managers manager ON manager.run_id = run.id
-     WHERE run.completed_at IS NULL
-       AND run.created_at < $1
-       AND manager.status IN ('pending', 'queued', 'running')
-     ORDER BY run.created_at, run.id, manager.manager_id`,
-    [cutoff]
-  );
-  return result.rows.map((row) => ({
-    runId: row.run_id,
-    jobType: row.job_type,
-    managerId: row.manager_id,
-    ...(row.queue_job_id ? { queueJobId: row.queue_job_id } : {})
-  }));
-}
-
-export async function markSchedulerRunManagerQueued(
-  db: PostgresQueryable,
-  runId: string,
-  managerId: string,
-  queueJobId: string
-): Promise<void> {
-  await updateSchedulerRunManager(db, runId, managerId, "queued", queueJobId);
-}
-
 export async function markSchedulerRunManagerStarted(db: PostgresQueryable, runId: string, managerId: string): Promise<boolean> {
   const result = await db.query(
     `UPDATE scheduler_dispatch_run_managers
@@ -163,7 +119,7 @@ export async function markSchedulerRunManagerStarted(db: PostgresQueryable, runI
   if ((result.rowCount ?? 0) === 1) {
     await db.query(
       `UPDATE scheduler_dispatch_runs
-       SET status = 'running', started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
+       SET status = 'running', started_at = COALESCE(started_at, CURRENT_TIMESTAMP), heartbeat_at = CURRENT_TIMESTAMP
        WHERE id = $1 AND completed_at IS NULL`,
       [runId]
     );
@@ -180,6 +136,15 @@ export async function markSchedulerRunManagerStarted(db: PostgresQueryable, runI
   return false;
 }
 
+export async function touchSchedulerRun(db: PostgresQueryable, runId: string): Promise<void> {
+  await db.query(
+    `UPDATE scheduler_dispatch_runs
+     SET heartbeat_at = CURRENT_TIMESTAMP
+     WHERE id = $1 AND completed_at IS NULL`,
+    [runId]
+  );
+}
+
 export async function completeSchedulerRunManager(
   db: PostgresQueryable,
   runId: string,
@@ -187,7 +152,7 @@ export async function completeSchedulerRunManager(
   status: SchedulerManagerTerminalStatus,
   errorSummary?: string
 ): Promise<SchedulerDispatchRun | undefined> {
-  await updateSchedulerRunManager(db, runId, managerId, status, undefined, errorSummary);
+  await updateSchedulerRunManager(db, runId, managerId, status, errorSummary);
   return finalizeSchedulerRun(db, runId);
 }
 
@@ -196,7 +161,6 @@ async function updateSchedulerRunManager(
   runId: string,
   managerId: string,
   status: SchedulerManagerStatus,
-  queueJobId?: string,
   errorSummary?: string
 ): Promise<void> {
   const terminal = isTerminalStatus(status);
@@ -206,14 +170,13 @@ async function updateSchedulerRunManager(
     `UPDATE scheduler_dispatch_run_managers
      SET
        status = $3,
-       queue_job_id = COALESCE($4, queue_job_id),
-       error_summary = COALESCE($5, error_summary),
+       error_summary = COALESCE($4, error_summary),
        ${startedAtUpdate},
        ${completedAtUpdate}
      WHERE run_id = $1
        AND manager_id = $2
        AND status IN ('pending', 'queued', 'running')`,
-    [runId, managerId, status, queueJobId ?? null, errorSummary ?? null]
+    [runId, managerId, status, errorSummary ?? null]
   );
   if ((result.rowCount ?? 0) !== 1) {
     throw new Error(`Scheduler run manager ${managerId} is not pending`);
@@ -237,7 +200,7 @@ export async function finalizeSchedulerRun(db: PostgresQueryable, runId: string)
     .join("; ");
   const finalized = await db.query<SchedulerDispatchRunRow>(
     `UPDATE scheduler_dispatch_runs
-     SET status = $2, completed_at = CURRENT_TIMESTAMP, error_summary = $3
+     SET status = $2, completed_at = CURRENT_TIMESTAMP, heartbeat_at = CURRENT_TIMESTAMP, error_summary = $3
      WHERE id = $1 AND completed_at IS NULL
      RETURNING *`,
     [runId, status, errorSummary || null]

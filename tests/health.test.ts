@@ -29,9 +29,6 @@ export function testConfig(overrides: TestConfigOverrides = {}): AppConfig {
     metrics: {
       backend: "none"
     },
-    scheduler: {
-      workerConcurrency: 2
-    },
     collector: {
       enabled: false,
       inventorySyncMinutes: 15,
@@ -93,7 +90,6 @@ describe("configuration", () => {
       OVIRT_INVENTORY_EXTENDED_SYNC_MINUTES: "30",
       OVIRT_INVENTORY_EVENT_SYNC_MINUTES: "1",
       OVIRT_INVENTORY_METRICS_SYNC_MINUTES: "2",
-      OVIRT_INVENTORY_SCHEDULER_WORKER_CONCURRENCY: "3",
       OVIRT_INVENTORY_BACKUP_SYNC_MINUTES: "45",
       OVIRT_INVENTORY_FULL_SNAPSHOT_HOUR: "3"
     });
@@ -109,7 +105,6 @@ describe("configuration", () => {
       backupSyncMinutes: 45,
       fullSnapshotHour: 3
     });
-    expect(config.scheduler).toEqual({ workerConcurrency: 3 });
     expect(() =>
       loadConfig({
         OVIRT_INVENTORY_DB_PATH: ":memory:",

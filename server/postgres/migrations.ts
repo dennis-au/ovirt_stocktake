@@ -500,5 +500,29 @@ export const postgresMigrations: PostgresMigration[] = [
       CREATE INDEX IF NOT EXISTS idx_scheduler_dispatch_run_managers_status
         ON scheduler_dispatch_run_managers (run_id, status);
     `
+  },
+  {
+    id: "006_scheduler_reconciler",
+    sql: `
+      ALTER TABLE scheduler_dispatch_runs
+        ADD COLUMN heartbeat_at TIMESTAMPTZ;
+
+      UPDATE scheduler_dispatch_runs
+      SET heartbeat_at = COALESCE(started_at, created_at)
+      WHERE heartbeat_at IS NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_scheduler_dispatch_runs_heartbeat
+        ON scheduler_dispatch_runs (heartbeat_at)
+        WHERE completed_at IS NULL;
+
+      CREATE TABLE IF NOT EXISTS scheduler_reconciler_state (
+        singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton = TRUE),
+        last_polled_at TIMESTAMPTZ,
+        last_successful_poll_at TIMESTAMPTZ,
+        last_error_at TIMESTAMPTZ,
+        last_error_summary TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `
   }
 ];

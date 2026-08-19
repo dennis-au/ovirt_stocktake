@@ -418,11 +418,13 @@ export interface AppSettingsInput {
 }
 
 export interface SchedulerStatus {
-  backend: "pg-boss";
+  backend: "postgres-reconciler";
   available: boolean;
   running: boolean;
   lastError?: string;
   lastErrorAt?: string;
+  lastPolledAt?: string;
+  lastSuccessfulPollAt?: string;
 }
 
 export interface SchedulerSchedule {

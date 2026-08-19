@@ -20,6 +20,14 @@ export interface ScheduleState extends ScheduleDefinition {
   updatedAt: string;
 }
 
+export interface SchedulerReconcilerState {
+  lastPolledAt?: string;
+  lastSuccessfulPollAt?: string;
+  lastErrorAt?: string;
+  lastErrorSummary?: string;
+  updatedAt: string;
+}
+
 interface ScheduleStateRow {
   job_type: ScheduledJobType;
   enabled: boolean;
@@ -31,6 +39,14 @@ interface ScheduleStateRow {
   last_result: ScheduleResult | null;
   last_error_summary: string | null;
   consecutive_failures: number;
+  updated_at: Date | string;
+}
+
+interface SchedulerReconcilerStateRow {
+  last_polled_at: Date | string | null;
+  last_successful_poll_at: Date | string | null;
+  last_error_at: Date | string | null;
+  last_error_summary: string | null;
   updated_at: Date | string;
 }
 
@@ -128,6 +144,52 @@ export async function listScheduleStates(db: PostgresQueryable): Promise<Schedul
   return result.rows.map(toScheduleState);
 }
 
+export async function recordSchedulerReconcilerPoll(
+  db: PostgresQueryable,
+  success: boolean,
+  errorSummary?: string
+): Promise<SchedulerReconcilerState> {
+  const result = success
+    ? await db.query<SchedulerReconcilerStateRow>(
+        `
+          INSERT INTO scheduler_reconciler_state
+            (singleton, last_polled_at, last_successful_poll_at)
+          VALUES (TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          ON CONFLICT (singleton) DO UPDATE SET
+            last_polled_at = CURRENT_TIMESTAMP,
+            last_successful_poll_at = CURRENT_TIMESTAMP,
+            last_error_at = NULL,
+            last_error_summary = NULL,
+            updated_at = CURRENT_TIMESTAMP
+          RETURNING *
+        `
+      )
+    : await db.query<SchedulerReconcilerStateRow>(
+        `
+          INSERT INTO scheduler_reconciler_state
+            (singleton, last_polled_at, last_error_at, last_error_summary)
+          VALUES (TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $1)
+          ON CONFLICT (singleton) DO UPDATE SET
+            last_polled_at = CURRENT_TIMESTAMP,
+            last_error_at = CURRENT_TIMESTAMP,
+            last_error_summary = $1,
+            updated_at = CURRENT_TIMESTAMP
+          RETURNING *
+        `,
+        [errorSummary ?? null]
+      );
+  return toSchedulerReconcilerState(result.rows[0]!);
+}
+
+export async function getSchedulerReconcilerState(db: PostgresQueryable): Promise<SchedulerReconcilerState | undefined> {
+  const result = await db.query<SchedulerReconcilerStateRow>(
+    `SELECT last_polled_at, last_successful_poll_at, last_error_at, last_error_summary, updated_at
+     FROM scheduler_reconciler_state
+     WHERE singleton = TRUE`
+  );
+  return result.rows[0] ? toSchedulerReconcilerState(result.rows[0]) : undefined;
+}
+
 async function getScheduleState(db: PostgresQueryable, jobType: ScheduledJobType): Promise<ScheduleState | undefined> {
   const result = await db.query<ScheduleStateRow>(
     "SELECT * FROM scheduler_schedule_state WHERE job_type = $1",
@@ -162,6 +224,16 @@ function toScheduleState(row: ScheduleStateRow): ScheduleState {
     ...(row.last_result ? { lastResult: row.last_result } : {}),
     ...(row.last_error_summary ? { lastErrorSummary: row.last_error_summary } : {}),
     consecutiveFailures: row.consecutive_failures,
+    updatedAt: toIso(row.updated_at) ?? new Date(0).toISOString()
+  };
+}
+
+function toSchedulerReconcilerState(row: SchedulerReconcilerStateRow): SchedulerReconcilerState {
+  return {
+    ...(toIso(row.last_polled_at) ? { lastPolledAt: toIso(row.last_polled_at) } : {}),
+    ...(toIso(row.last_successful_poll_at) ? { lastSuccessfulPollAt: toIso(row.last_successful_poll_at) } : {}),
+    ...(toIso(row.last_error_at) ? { lastErrorAt: toIso(row.last_error_at) } : {}),
+    ...(row.last_error_summary ? { lastErrorSummary: row.last_error_summary } : {}),
     updatedAt: toIso(row.updated_at) ?? new Date(0).toISOString()
   };
 }

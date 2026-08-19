@@ -4,9 +4,9 @@ import {
   completeSchedulerRunManager,
   createSchedulerRun,
   getSchedulerRun,
-  markSchedulerRunManagerQueued,
   markSchedulerRunManagerStarted,
-  recoverStaleSchedulerRuns
+  recoverStaleSchedulerRuns,
+  touchSchedulerRun
 } from "../server/scheduler-runs.js";
 import { migratePostgres, type PostgresQueryable } from "../server/postgres/migrate.js";
 
@@ -32,8 +32,6 @@ describe("scheduler dispatch runs", () => {
     const db = await memoryPostgres();
     const run = await createSchedulerRun(db, "inventory", ["manager-1", "manager-2"]);
 
-    await markSchedulerRunManagerQueued(db, run.id, "manager-1", "job-1");
-    await markSchedulerRunManagerQueued(db, run.id, "manager-2", "job-2");
     await markSchedulerRunManagerStarted(db, run.id, "manager-1");
     await markSchedulerRunManagerStarted(db, run.id, "manager-2");
 
@@ -55,8 +53,8 @@ describe("scheduler dispatch runs", () => {
     const db = await memoryPostgres();
     const run = await createSchedulerRun(db, "metrics", ["manager-1", "manager-2"]);
 
-    await markSchedulerRunManagerQueued(db, run.id, "manager-1", "job-1");
-    await markSchedulerRunManagerQueued(db, run.id, "manager-2", "job-2");
+    await markSchedulerRunManagerStarted(db, run.id, "manager-1");
+    await markSchedulerRunManagerStarted(db, run.id, "manager-2");
     expect(await completeSchedulerRunManager(db, run.id, "manager-1", "failed", "authentication failed")).toBeUndefined();
 
     expect(await completeSchedulerRunManager(db, run.id, "manager-2", "failed", "network failure")).toMatchObject({
@@ -66,11 +64,10 @@ describe("scheduler dispatch runs", () => {
     });
   });
 
-  it("does not reopen a terminal manager result when pg-boss retries its job", async () => {
+  it("does not reopen a terminal manager result after it is complete", async () => {
     const db = await memoryPostgres();
     const run = await createSchedulerRun(db, "inventory", ["manager-1"]);
 
-    await markSchedulerRunManagerQueued(db, run.id, "manager-1", "job-1");
     expect(await markSchedulerRunManagerStarted(db, run.id, "manager-1")).toBe(true);
     expect(await markSchedulerRunManagerStarted(db, run.id, "manager-1")).toBe(true);
     await completeSchedulerRunManager(db, run.id, "manager-1", "failed", "temporary network failure");
@@ -86,13 +83,27 @@ describe("scheduler dispatch runs", () => {
   it("skips abandoned manager jobs and releases a stale dispatch run", async () => {
     const db = await memoryPostgres();
     const run = await createSchedulerRun(db, "inventory", ["manager-1", "manager-2"]);
-    await markSchedulerRunManagerQueued(db, run.id, "manager-1", "job-1");
-    await markSchedulerRunManagerQueued(db, run.id, "manager-2", "job-2");
-    await db.query("UPDATE scheduler_dispatch_runs SET created_at = CURRENT_TIMESTAMP - INTERVAL '21 minutes' WHERE id = $1", [run.id]);
+    await markSchedulerRunManagerStarted(db, run.id, "manager-1");
+    await markSchedulerRunManagerStarted(db, run.id, "manager-2");
+    await db.query(
+      "UPDATE scheduler_dispatch_runs SET created_at = CURRENT_TIMESTAMP - INTERVAL '21 minutes', heartbeat_at = CURRENT_TIMESTAMP - INTERVAL '21 minutes' WHERE id = $1",
+      [run.id]
+    );
 
     const recovered = await recoverStaleSchedulerRuns(db, new Date(), 20 * 60_000);
 
     expect(recovered).toEqual([expect.objectContaining({ id: run.id, status: "partial", completedManagerCount: 2 })]);
     expect(await getSchedulerRun(db, run.id)).toMatchObject({ status: "partial", completedManagerCount: 2 });
+  });
+
+  it("keeps an active run out of stale recovery while its heartbeat is fresh", async () => {
+    const db = await memoryPostgres();
+    const run = await createSchedulerRun(db, "inventory", ["manager-1"]);
+    await markSchedulerRunManagerStarted(db, run.id, "manager-1");
+    await db.query("UPDATE scheduler_dispatch_runs SET heartbeat_at = CURRENT_TIMESTAMP - INTERVAL '21 minutes' WHERE id = $1", [run.id]);
+    await touchSchedulerRun(db, run.id);
+
+    expect(await recoverStaleSchedulerRuns(db, new Date(), 20 * 60_000)).toEqual([]);
+    expect(await getSchedulerRun(db, run.id)).toMatchObject({ status: "running", completedManagerCount: 0 });
   });
 });

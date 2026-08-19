@@ -19,7 +19,7 @@ import { registerInventoryRoutes } from "./inventory.js";
 import { registerManagerRoutes } from "./managers.js";
 import { registerMetricRoutes } from "./metrics.js";
 import type { ConnectablePostgres } from "./postgres/inventory.js";
-import { listScheduleStates } from "./scheduler-state.js";
+import { getSchedulerReconcilerState, listScheduleStates } from "./scheduler-state.js";
 import { requireRole, roles } from "./rbac.js";
 import { registerSavedViewRoutes } from "./saved-views.js";
 import { registerSettingsRoutes } from "./settings.js";
@@ -42,7 +42,7 @@ export function buildApp({ db, config, inventoryDb }: BuildAppOptions): FastifyI
     service: "ovirt-inventory",
     database: databaseHealth(db),
     scheduler: scheduler?.status ?? {
-      backend: "pg-boss" as const,
+      backend: "postgres-reconciler" as const,
       available: schedulerAvailable(config, inventoryDb),
       running: false
     }
@@ -67,11 +67,23 @@ export function buildApp({ db, config, inventoryDb }: BuildAppOptions): FastifyI
     if (!inventoryDb) {
       return reply.code(503).send({ error: "PostgreSQL scheduling is not configured" });
     }
+    const reconcilerState = await getSchedulerReconcilerState(inventoryDb);
+    const schedulerStatus = scheduler?.status ?? {
+      backend: "postgres-reconciler" as const,
+      available: schedulerAvailable(config, inventoryDb),
+      running: false
+    };
     return {
-      scheduler: scheduler?.status ?? {
-        backend: "pg-boss" as const,
-        available: schedulerAvailable(config, inventoryDb),
-        running: false
+      scheduler: {
+        ...schedulerStatus,
+        ...(schedulerStatus.lastError ? {} : reconcilerState?.lastErrorSummary ? { lastError: reconcilerState.lastErrorSummary } : {}),
+        ...(schedulerStatus.lastErrorAt ? {} : reconcilerState?.lastErrorAt ? { lastErrorAt: reconcilerState.lastErrorAt } : {}),
+        ...(schedulerStatus.lastPolledAt ? {} : reconcilerState?.lastPolledAt ? { lastPolledAt: reconcilerState.lastPolledAt } : {}),
+        ...(schedulerStatus.lastSuccessfulPollAt
+          ? {}
+          : reconcilerState?.lastSuccessfulPollAt
+            ? { lastSuccessfulPollAt: reconcilerState.lastSuccessfulPollAt }
+            : {})
       },
       schedules: await listScheduleStates(inventoryDb)
     };
