@@ -2,7 +2,7 @@ name: ovirt-inventory
 
 services:
   app:
-    image: ${OVIRT_INVENTORY_IMAGE:-ghcr.io/dennis-au/ovirt_stocktake:v0.1.30}
+    image: ${OVIRT_INVENTORY_IMAGE:-ghcr.io/dennis-au/ovirt_stocktake:v0.1.31}
     restart: unless-stopped
     depends_on:
       postgres:
