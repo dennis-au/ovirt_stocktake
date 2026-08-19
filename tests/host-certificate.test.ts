@@ -1,17 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { certificateExpiresAtFromHost, withoutHostCertificateContent } from "../server/host-certificate.js";
-import { testHostCertificate } from "./fixtures/host-certificate.js";
+import { withoutHostCertificate } from "../server/host-certificate.js";
 
-describe("host certificate normalization", () => {
-  it("derives the expiry timestamp and strips PEM material", () => {
-    const host = { name: "host-01", certificate: { content: testHostCertificate } };
+describe("host certificate sanitization", () => {
+  it("removes certificate metadata and legacy expiry fields", () => {
+    const host = {
+      name: "host-01",
+      certificate: { content: "raw-certificate-material" },
+      certificateExpiresAt: "2036-08-15T03:11:33.000Z",
+      certificate_expires_at: "2036-08-15T03:11:33.000Z"
+    };
 
-    expect(certificateExpiresAtFromHost(host)).toBe("2036-08-15T03:11:33.000Z");
-    expect(withoutHostCertificateContent(host)).toEqual({ name: "host-01", certificateExpiresAt: "2036-08-15T03:11:33.000Z" });
+    expect(withoutHostCertificate(host)).toEqual({ name: "host-01" });
   });
 
-  it("treats missing or malformed certificates as unavailable", () => {
-    expect(certificateExpiresAtFromHost({ certificate: { content: "not a certificate" } })).toBeUndefined();
-    expect(withoutHostCertificateContent({ name: "host-01", certificate: { content: "not a certificate" } })).toEqual({ name: "host-01" });
+  it("preserves hosts without certificate fields", () => {
+    expect(withoutHostCertificate({ id: "host-01", name: "host-01", status: "up" })).toEqual({ id: "host-01", name: "host-01", status: "up" });
   });
 });

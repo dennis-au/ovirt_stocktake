@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { currentSession } from "./auth.js";
 import { recordAudit } from "./audit.js";
 import type { SqliteDatabase } from "./db.js";
-import { withoutHostCertificateContent } from "./host-certificate.js";
+import { withoutHostCertificate } from "./host-certificate.js";
 import type { AppRole } from "./rbac.js";
 import { redactInventoryResources, requireRole, roles } from "./rbac.js";
 import { resourceKeys, type CollectionIssue, type InventoryResources, type SnapshotPayload, type SnapshotStatus } from "../shared/snapshot.js";
@@ -185,7 +185,7 @@ function snapshotDetail(row: SnapshotRecord): SnapshotDetail {
 function sanitizeSnapshotResources(resources: InventoryResources): InventoryResources {
   return {
     ...resources,
-    hosts: resources.hosts.map(withoutHostCertificateContent)
+    hosts: resources.hosts.map(withoutHostCertificate)
   };
 }
 

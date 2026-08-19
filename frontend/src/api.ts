@@ -94,8 +94,6 @@ export type DiagnosticIssueSeverity = "warning" | "error";
 export type DiagnosticIssueOperation =
   | "resource_list"
   | "child_collection"
-  | "host_certificate_detail"
-  | "host_certificate_expiry"
   | "snapshot_list"
   | "snapshot_detail"
   | "snapshot_date"
@@ -153,6 +151,7 @@ export interface SnapshotAgeDiagnostics {
   managerCount: number;
   managers: Array<{
     label: string;
+    name: string;
     enabled: boolean;
     latestInventoryRun?: SnapshotAgeDiagnosticRun;
   }>;
@@ -285,7 +284,6 @@ export interface SnapshotHostInventoryRow {
   status?: string;
   hostOs?: string;
   vdsmVersion?: string;
-  certificateExpiresAt?: string;
   physicalCpuThreads?: number;
   physicalMemoryMiB?: number;
   hostedVmCount: number;

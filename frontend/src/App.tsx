@@ -1630,7 +1630,7 @@ function HardwareInventoryTable({ inventory }: { inventory: SnapshotHostInventor
     <section className="table-card inventory-table-card" aria-labelledby="hardware-inventory-table-title">
       <div className="table-title">
         <h3 id="hardware-inventory-table-title">Hardware Details</h3>
-        <span className="table-hint">Host hardware, VDSM version, and certificate expiry</span>
+        <span className="table-hint">Host hardware and VDSM version</span>
       </div>
       <div className="table-scroll inventory-table-scroll">
         <table className="data-table hardware-inventory-data-table">
@@ -1642,7 +1642,6 @@ function HardwareInventoryTable({ inventory }: { inventory: SnapshotHostInventor
               <th scope="col">Status</th>
               <th scope="col">Host OS</th>
               <th scope="col">oVirt/VDSM Version</th>
-              <th scope="col">Certificate Expires</th>
               <th scope="col">Physical CPU</th>
               <th scope="col">Physical RAM</th>
               <th scope="col">Hosted VMs</th>
@@ -1653,7 +1652,7 @@ function HardwareInventoryTable({ inventory }: { inventory: SnapshotHostInventor
           <tbody>
             {inventory.rows.length === 0 ? (
               <tr>
-                <td className="empty-table-cell" colSpan={12}>
+                <td className="empty-table-cell" colSpan={11}>
                   No hosts match the current filters
                 </td>
               </tr>
@@ -1668,7 +1667,6 @@ function HardwareInventoryTable({ inventory }: { inventory: SnapshotHostInventor
                   </td>
                   <td>{host.hostOs ?? "-"}</td>
                   <td>{host.vdsmVersion ?? "-"}</td>
-                  <td>{formatCertificateExpiry(host.certificateExpiresAt)}</td>
                   <td>{host.physicalCpuThreads === undefined ? "-" : `${host.physicalCpuThreads.toLocaleString()} threads`}</td>
                   <td>{formatMemory(host.physicalMemoryMiB)}</td>
                   <td>{host.hostedVmCount.toLocaleString()}</td>
@@ -1837,19 +1835,6 @@ function hostInventoryStatusClass(status: string | undefined) {
     return "status-warning";
   }
   return "status-muted";
-}
-
-function formatCertificateExpiry(value: string | undefined) {
-  if (!value) {
-    return "-";
-  }
-  const expiry = Date.parse(value);
-  if (!Number.isFinite(expiry)) {
-    return "-";
-  }
-  const daysUntilExpiry = Math.ceil((expiry - Date.now()) / 86_400_000);
-  const status = daysUntilExpiry < 0 ? "status-danger" : daysUntilExpiry <= 30 ? "status-warning" : "status-success";
-  return <span className={`state-pill ${status}`}>{new Date(expiry).toLocaleDateString()}</span>;
 }
 
 function formatHostWorkload(host: SnapshotHostInventoryResponse["rows"][number]) {

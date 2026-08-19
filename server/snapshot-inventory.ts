@@ -2,7 +2,6 @@ import type { FastifyInstance } from "fastify";
 import { currentSession } from "./auth.js";
 import { recordAudit } from "./audit.js";
 import type { SqliteDatabase } from "./db.js";
-import { certificateExpiresAtFromHost } from "./host-certificate.js";
 import { requireRole, roles } from "./rbac.js";
 import { snapshotAgeDaysAt, snapshotCreatedAt } from "./snapshot-age.js";
 import { isActiveVmSnapshot } from "./snapshot-semantics.js";
@@ -85,7 +84,6 @@ export interface SnapshotHostInventoryRow {
   status?: string;
   hostOs?: string;
   vdsmVersion?: string;
-  certificateExpiresAt?: string;
   physicalCpuThreads?: number;
   physicalMemoryMiB?: number;
   hostedVmCount: number;
@@ -207,7 +205,6 @@ const hardwareInventoryColumns: Array<{ key: keyof SnapshotHostInventoryRow; tit
   { key: "status", title: "Status" },
   { key: "hostOs", title: "Host OS" },
   { key: "vdsmVersion", title: "oVirt/VDSM Version" },
-  { key: "certificateExpiresAt", title: "Certificate Expiry" },
   { key: "physicalCpuThreads", title: "Physical CPU Threads" },
   { key: "physicalMemoryMiB", title: "Physical RAM", format: (row) => formatMemory(row.physicalMemoryMiB) },
   { key: "hostedVmCount", title: "Hosted VMs" },
@@ -488,7 +485,6 @@ function hostRows(manager: ManagerRow, snapshot: SnapshotRow): SnapshotHostInven
         status: stringValue(host.status),
         hostOs: hostOperatingSystem(host),
         vdsmVersion: versionLabel(host.version),
-        certificateExpiresAt: certificateExpiresAtFromHost(host),
         physicalCpuThreads: hostCpuThreads(host),
         physicalMemoryMiB: bytesToMiB(host.memory),
         hostedVmCount: vms.length,

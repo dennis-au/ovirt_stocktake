@@ -8,7 +8,6 @@ import { collectOvirtCapacityMetrics, collectOvirtSnapshot, ovirtApiBase, ovirtT
 import { migratePostgres, type PostgresQueryable } from "../server/postgres/migrate.js";
 import { hashPassword } from "../server/security.js";
 import { testConfig } from "./health.test.js";
-import { testHostCertificate } from "./fixtures/host-certificate.js";
 
 const target: OvirtCollectionTarget = {
   managerId: "manager-1",
@@ -101,14 +100,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 function ovirtFetchMock(
   options: {
     hostList?: Record<string, unknown> | Array<Record<string, unknown>>;
-    hostDetail?: Record<string, unknown>;
-    hostDetails?: Record<string, Record<string, unknown>>;
-    hostDetailResponse?: "direct" | "wrapped";
-    hostDetailStatus?: number;
-    hostDetailDelayMs?: number;
-    onHostDetailStart?: () => void;
-    onHostDetailEnd?: () => void;
-    hostDetailNeverResponds?: boolean;
   } = {}
 ) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -127,26 +118,6 @@ function ovirtFetchMock(
     const resource = parsed.pathname.split("/").at(-1);
     const page = parsed.searchParams.get("page");
 
-    const hostDetailMatch = parsed.pathname.match(/\/hosts\/([^/]+)$/);
-    if (hostDetailMatch) {
-      if (options.hostDetailNeverResponds) {
-        return new Promise<Response>(() => undefined);
-      }
-      if (options.hostDetailStatus) {
-        return jsonResponse({}, options.hostDetailStatus);
-      }
-      options.onHostDetailStart?.();
-      try {
-        if (options.hostDetailDelayMs) {
-          await new Promise((resolve) => setTimeout(resolve, options.hostDetailDelayMs));
-        }
-        const hostId = decodeURIComponent(hostDetailMatch[1]!);
-        const host = options.hostDetails?.[hostId] ?? options.hostDetail ?? { id: hostId, name: hostId };
-        return jsonResponse(options.hostDetailResponse === "direct" ? host : { host });
-      } finally {
-        options.onHostDetailEnd?.();
-      }
-    }
     if (resource === "datacenters") {
       return jsonResponse({ data_center: [{ id: "dc-1", name: "Default" }] });
     }
@@ -321,144 +292,12 @@ describe("oVirt backend collector", () => {
     expect(snapshot.resources.vms).toHaveLength(1001);
     expect(snapshot.resources.hosts[0]).toMatchObject({ name: "host-1" });
     expect(snapshot.resources.hosts[0]).not.toHaveProperty("certificate");
+    expect(snapshot.resources.hosts[0]).not.toHaveProperty("certificateExpiresAt");
+    expect(fetchMock.mock.calls.some(([input]) => /\/hosts\/host-1(?:\?|$)/.test(String(input)))).toBe(false);
     expect(fetchMock.mock.calls.slice(1).every(([, init]) => init?.method === "GET")).toBe(true);
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
       "Content-Type": "application/x-www-form-urlencoded"
     });
-  });
-
-  it("hydrates a missing host certificate expiry from the read-only host detail endpoint", async () => {
-    const fetchMock = ovirtFetchMock({
-      hostList: {
-        id: "host-1",
-        name: "host-1",
-        status: "up",
-        certificate: { subject: "CN=host-1", organization: "Example" }
-      },
-      hostDetail: {
-        id: "host-1",
-        name: "host-1",
-        certificate: { content: testHostCertificate }
-      }
-    });
-
-    const snapshot = await collectOvirtSnapshot(target, { fetchImpl: fetchMock as unknown as typeof fetch });
-
-    expect(snapshot.status).toBe("success");
-    expect(snapshot.resources.hosts).toEqual([
-      expect.objectContaining({ id: "host-1", certificateExpiresAt: "2036-08-15T03:11:33.000Z" })
-    ]);
-    expect(snapshot.resources.hosts[0]).not.toHaveProperty("certificate");
-    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/hosts/host-1"))).toBe(true);
-    expect(fetchMock.mock.calls.slice(1).every(([, init]) => init?.method === "GET")).toBe(true);
-  });
-
-  it("keeps host inventory and marks collection partial when certificate detail lookup fails", async () => {
-    const fetchMock = ovirtFetchMock({
-      hostList: {
-        id: "host-1",
-        name: "host-1",
-        status: "up",
-        certificate: { subject: "CN=host-1" }
-      },
-      hostDetailStatus: 500
-    });
-
-    const snapshot = await collectOvirtSnapshot(target, { fetchImpl: fetchMock as unknown as typeof fetch });
-
-    expect(snapshot.status).toBe("partial");
-    expect(snapshot.resources.hosts).toEqual([expect.objectContaining({ id: "host-1", name: "host-1" })]);
-    expect(snapshot.resources.hosts[0]).not.toHaveProperty("certificate");
-    expect(snapshot.errors).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ resource: "hosts", message: expect.stringContaining("certificate detail collection failed") })
-      ])
-    );
-  });
-
-  it("keeps the host and warns when a direct all-content host response does not expose certificate expiry", async () => {
-    const fetchMock = ovirtFetchMock({
-      hostList: {
-        id: "host-1",
-        name: "host-1",
-        status: "up",
-        certificate: { subject: "CN=host-1" }
-      },
-      hostDetail: {
-        id: "host-1",
-        name: "host-1",
-        certificate: { subject: "CN=host-1", organization: "Example" }
-      },
-      hostDetailResponse: "direct"
-    });
-
-    const snapshot = await collectOvirtSnapshot(target, { fetchImpl: fetchMock as unknown as typeof fetch });
-
-    expect(snapshot.status).toBe("success");
-    expect(snapshot.resources.hosts).toEqual([expect.objectContaining({ id: "host-1", name: "host-1" })]);
-    expect(snapshot.resources.hosts[0]).not.toHaveProperty("certificate");
-    expect(snapshot.warnings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ resource: "hosts", message: expect.stringContaining("certificate expiry is unavailable") })
-      ])
-    );
-    const detailRequest = fetchMock.mock.calls.find(([input]) => String(input).includes("/hosts/host-1"));
-    expect(new URL(String(detailRequest?.[0])).searchParams.get("all_content")).toBe("true");
-  });
-
-  it("limits concurrent host certificate lookups", async () => {
-    let activeRequests = 0;
-    let maximumConcurrentRequests = 0;
-    const fetchMock = ovirtFetchMock({
-      hostList: [
-        { id: "host-1", name: "host-1", status: "up", certificate: { subject: "CN=host-1" } },
-        { id: "host-2", name: "host-2", status: "up", certificate: { subject: "CN=host-2" } },
-        { id: "host-3", name: "host-3", status: "up", certificate: { subject: "CN=host-3" } }
-      ],
-      hostDetails: {
-        "host-1": { id: "host-1", name: "host-1", certificate: { content: testHostCertificate } },
-        "host-2": { id: "host-2", name: "host-2", certificate: { content: testHostCertificate } },
-        "host-3": { id: "host-3", name: "host-3", certificate: { content: testHostCertificate } }
-      },
-      hostDetailDelayMs: 10,
-      onHostDetailStart: () => {
-        activeRequests += 1;
-        maximumConcurrentRequests = Math.max(maximumConcurrentRequests, activeRequests);
-      },
-      onHostDetailEnd: () => {
-        activeRequests -= 1;
-      }
-    });
-
-    const snapshot = await collectOvirtSnapshot(target, {
-      fetchImpl: fetchMock as unknown as typeof fetch,
-      detailConcurrency: 2
-    });
-
-    expect(snapshot.status).toBe("success");
-    expect(maximumConcurrentRequests).toBeLessThanOrEqual(2);
-  });
-
-  it("records a partial result when a detail request exceeds the timeout", async () => {
-    const fetchMock = ovirtFetchMock({
-      hostList: {
-        id: "host-1",
-        name: "host-1",
-        status: "up",
-        certificate: { subject: "CN=host-1" }
-      },
-      hostDetailNeverResponds: true
-    });
-
-    const snapshot = await collectOvirtSnapshot(target, {
-      fetchImpl: fetchMock as unknown as typeof fetch,
-      requestTimeoutMs: 10
-    });
-
-    expect(snapshot.status).toBe("partial");
-    expect(snapshot.errors).toEqual(
-      expect.arrayContaining([expect.objectContaining({ resource: "hosts", message: expect.stringContaining("timed out") })])
-    );
   });
 
   it("collects the revamp inventory resource coverage with read-only API calls", async () => {

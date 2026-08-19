@@ -180,7 +180,6 @@ describe("snapshot-backed VM inventory", () => {
         status: "up",
         hostOs: "Red Hat Virtualization Host 4.4",
         vdsmVersion: "4.4.10",
-        certificateExpiresAt: "2026-11-14T00:00:00.000Z",
         physicalCpuThreads: 48,
         physicalMemoryMiB: 262144,
         hostedVmCount: 2,
@@ -189,6 +188,8 @@ describe("snapshot-backed VM inventory", () => {
       })
     ]);
     expect(response.body).not.toContain("raw-certificate-material-must-not-leak");
+    expect(response.body).not.toContain("certificateExpiresAt");
+    expect(response.body).not.toContain("2026-11-14T00:00:00.000Z");
 
     const latest = await app.inject({ method: "GET", url: "/api/snapshots/latest", cookies: cookie });
     expect(latest.statusCode).toBe(200);
@@ -213,13 +214,15 @@ describe("snapshot-backed VM inventory", () => {
     expect(csv.headers["content-type"]).toContain("text/csv");
     expect(csv.headers["content-disposition"]).toContain("ovirt-inventory-hardware.csv");
     expect(csv.body.split("\n")[0]).toBe(
-      "Manager,Cluster,Host,Status,Host OS,oVirt/VDSM Version,Certificate Expiry,Physical CPU Threads,Physical RAM,Hosted VMs,Allocated vCPU,Allocated RAM,Collected At"
+      "Manager,Cluster,Host,Status,Host OS,oVirt/VDSM Version,Physical CPU Threads,Physical RAM,Hosted VMs,Allocated vCPU,Allocated RAM,Collected At"
     );
-    expect(csv.body).toContain("lab,Default,node-01,up,Red Hat Virtualization Host 4.4,4.4.10,2026-11-14T00:00:00.000Z,48");
+    expect(csv.body).toContain("lab,Default,node-01,up,Red Hat Virtualization Host 4.4,4.4.10,48");
     expect(csv.body).toContain('"262,144 MiB (~256 GiB)",2,5,"12,292 MiB (~12 GiB)",2026-08-12T04:00:00.000Z');
     expect(csv.body).not.toContain("other");
     expect(csv.body).not.toContain("manager-password");
     expect(csv.body).not.toContain("raw-certificate-material-must-not-leak");
+    expect(csv.body).not.toContain("Certificate Expiry");
+    expect(csv.body).not.toContain("2026-11-14T00:00:00.000Z");
 
     const pdf = await app.inject({
       method: "GET",

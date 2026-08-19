@@ -109,15 +109,15 @@ Acceptance note: lab collection succeeded with redacted evidence. The lab curren
 
 ## Milestone 10A: Collection Diagnostics Evidence Expansion [ ]
 
-Improve the admin-only Diagnostics page so production users can provide enough redacted evidence to identify the remaining causes of `partial` inventory runs. This milestone is diagnostic-only and must not change collection status rules or collector behavior.
+Improve the admin-only Diagnostics page so production users can provide enough redacted evidence to identify the remaining causes of `partial` inventory runs. This milestone does not change collection status rules; the only collector change is removing unsupported host certificate-expiry retrieval.
 
 ### Scope
 
 - Keep the existing Snapshot Age Diagnostics route and admin-only access control.
 - Add per-Manager totals for collection status, warning count, error count, populated resource count, and latest collection duration/API version.
 - Add redacted error and warning counts grouped by resource category, including top-level resources, hosts, VM snapshots, affinity groups, and other child collections.
-- Distinguish snapshot-list failures, snapshot-detail failures, host certificate-detail failures, missing certificate expiry, authentication failures, TLS/network failures, timeout failures, HTTP 4xx failures, HTTP 5xx failures, and other failures where the stored evidence supports that classification.
-- Show whether each category was collected, empty, partially collected, or failed, without exposing manager names, Manager URLs, VM names, snapshot names, credentials, tokens, authorization headers, or raw API payloads.
+- Distinguish snapshot-list failures, snapshot-detail failures, authentication failures, TLS/network failures, timeout failures, HTTP 4xx failures, HTTP 5xx failures, and other failures where the stored evidence supports that classification.
+- Show whether each category was collected, empty, partially collected, or failed. The admin Diagnostics page may show configured Manager names, but copied and downloaded reports must use anonymized labels and must not expose Manager URLs, VM names, snapshot names, credentials, tokens, authorization headers, or raw API payloads.
 - Include redacted issue samples or stable issue fingerprints with resource category, failure category, HTTP status class when known, and count. Do not include free-form upstream error text unless it has passed explicit redaction.
 - Add a reliable report handoff path: Clipboard API when available, a textarea-selection fallback when it is unavailable or denied, and a downloadable redacted JSON report as a final fallback.
 - Show clear copy/download success and failure states and preserve the report in a selectable field.
@@ -126,19 +126,18 @@ Improve the admin-only Diagnostics page so production users can provide enough r
 ### Explicitly Deferred
 
 - Do not change the definition of `success`, `partial`, or `failed`.
-- Do not downgrade host certificate-detail errors from errors to warnings.
-- Do not change host certificate API calls, snapshot collection, retry behavior, scheduler behavior, database schema, or Compose packaging.
+- Do not change snapshot collection, retry behavior, scheduler behavior, database schema, or Compose packaging beyond removing unsupported host certificate-expiry collection.
 - Do not infer a root cause from the current report until the expanded report provides resource-level evidence.
 
 ### Implementation Phases
 
 #### Phase 1: Diagnostic Contract
 
-- [x] Define a versioned redacted diagnostics response containing collection totals, per-resource state, categorized issue counts, and safe issue fingerprints.
-- [x] Add server-side redaction and classification tests for known issue messages and unknown/malformed issue values.
-- [x] Confirm the response cannot contain Manager names/URLs, VM names, snapshot names, credentials, tokens, authorization headers, or raw payloads.
+- [x] Define a versioned diagnostics response containing collection totals, per-resource state, categorized issue counts, and safe issue fingerprints. The admin-only UI response includes the configured Manager name for on-screen diagnosis.
+- [x] Add classification tests for known issue messages and unknown/malformed issue values, plus report-redaction tests for manager names and sensitive collection details.
+- [x] Confirm copied and downloaded reports cannot contain Manager names/URLs, VM names, snapshot names, credentials, tokens, authorization headers, or raw payloads.
 
-**Checkpoint:** An admin can request a complete report that identifies which resource category caused a partial run without exposing sensitive inventory details.
+**Checkpoint:** An admin can identify the affected Manager and resource category on screen, then share a report that omits sensitive inventory details.
 
 #### Phase 2: Diagnostics Page Evidence UI
 
@@ -166,7 +165,7 @@ Improve the admin-only Diagnostics page so production users can provide enough r
 - [x] Run `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build`.
 - [ ] Manually collect from `https://lab111/ovirt-engine/` only if credentials are supplied out of band; paste only the redacted report into the next troubleshooting step.
 
-**Done when:** The Diagnostics page provides enough redacted per-resource evidence to identify the remaining partial-collection cause, and the report can be copied or downloaded in browser environments that deny clipboard access. No partial-status or collector behavior has changed.
+**Done when:** The Diagnostics page provides enough redacted per-resource evidence to identify the remaining partial-collection cause, and the report can be copied or downloaded in browser environments that deny clipboard access. No partial-status rules have changed.
 
 ## Milestone 11: Durable PostgreSQL Job Scheduler [ ]
 

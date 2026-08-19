@@ -10,7 +10,7 @@ import {
   type ResourceKey,
   type SnapshotPayload
 } from "../shared/snapshot.js";
-import { certificateExpiresAtFromHost, withoutHostCertificateContent } from "./host-certificate.js";
+import { withoutHostCertificate } from "./host-certificate.js";
 import { snapshotCreatedAt } from "./snapshot-age.js";
 import { isActiveVmSnapshot } from "./snapshot-semantics.js";
 
@@ -119,9 +119,7 @@ export async function collectOvirtSnapshot(target: OvirtCollectionTarget, option
     }
   }
 
-  inventory.hosts = (await hydrateHostCertificateExpiry(fetchImpl, target.managerUrl, inventory.hosts, authorization, options, warnings, errors)).map(
-    withoutHostCertificateContent
-  );
+  inventory.hosts = inventory.hosts.map(withoutHostCertificate);
 
   inventory.vmSnapshots = await collectVmSnapshots(fetchImpl, target.managerUrl, inventory.vms, authorization, options, warnings, errors);
   inventory.affinityGroups = await collectChildResources(
@@ -615,47 +613,6 @@ async function collectVmSnapshots(
     return withParentReference(hydrated, "vm", vm);
   });
   return snapshots;
-}
-
-async function hydrateHostCertificateExpiry(
-  fetchImpl: typeof fetch,
-  managerUrl: string,
-  hosts: InventoryResource[],
-  authorization: string,
-  options: OvirtCollectorOptions,
-  warnings: CollectionIssue[],
-  errors: CollectionIssue[]
-): Promise<InventoryResource[]> {
-  return mapWithConcurrency(hosts, detailConcurrency(options), async (host) => {
-    const hostId = nonEmptyString(host.id);
-    if (!hostId || certificateExpiresAtFromHost(host)) {
-      return host;
-    }
-
-    try {
-      const detail = await getResourcePath(
-        fetchImpl,
-        managerUrl,
-        `hosts/${encodeURIComponent(hostId)}?all_content=true`,
-        "host",
-        authorization,
-        options
-      );
-      const certificateExpiresAt = certificateExpiresAtFromHost(detail);
-      if (certificateExpiresAt) {
-        return { ...host, certificateExpiresAt };
-      } else {
-        warnings.push({ resource: "hosts", message: `${displayName(host)} certificate expiry is unavailable` });
-        return host;
-      }
-    } catch (error) {
-      errors.push({
-        resource: "hosts",
-        message: `${displayName(host)} certificate detail collection failed: ${error instanceof Error ? error.message : "Collection failed"}`
-      });
-      return host;
-    }
-  });
 }
 
 async function hydrateVmSnapshotDate(

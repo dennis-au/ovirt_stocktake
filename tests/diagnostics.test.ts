@@ -82,13 +82,10 @@ function snapshot(managerId: string): SnapshotPayload {
     },
     warnings: [
       { resource: "vmSnapshots", message: "private-vm-2 snapshot private-missing-date has no creation date" },
-      { resource: "vms", message: "private-vm has no guest-agent data" },
-      { resource: "hosts", message: "private-host certificate expiry is unavailable" }
+      { resource: "vms", message: "private-vm has no guest-agent data" }
     ],
     errors: [
       { resource: "vmSnapshots", message: "private-vm-3 snapshot private-invalid-date detail collection failed: oVirt returned HTTP 500" },
-      { resource: "hosts", message: "private-host certificate detail collection failed: oVirt returned HTTP 404" },
-      { resource: "hosts", message: "private-host-2 certificate detail collection failed: oVirt returned HTTP 404" },
       { resource: "affinityGroups", message: "private-cluster affinitygroups collection failed: oVirt request timed out" },
       { resource: "networks", message: "Network or TLS failure while contacting private-manager.example" }
     ]
@@ -114,7 +111,7 @@ describe("snapshot age diagnostics", () => {
     await app.close();
   });
 
-  it("returns redacted snapshot date evidence without raw inventory details", async () => {
+  it("returns the configured manager name without raw inventory details", async () => {
     const { app, cookie } = await authenticatedApp();
     const managerId = await createManager(app, cookie);
     const saved = await app.inject({ method: "POST", url: "/api/snapshots", cookies: cookie, payload: snapshot(managerId) });
@@ -131,10 +128,11 @@ describe("snapshot age diagnostics", () => {
         managers: [
           expect.objectContaining({
             label: "Manager 1",
+            name: "private-manager-name",
             latestInventoryRun: expect.objectContaining({
               status: "partial",
-              warningCount: 3,
-              errorCount: 5,
+              warningCount: 2,
+              errorCount: 3,
               populatedResourceCount: 3,
               totalResourceCount: 12,
               regularSnapshotCount: 3,
@@ -149,22 +147,13 @@ describe("snapshot age diagnostics", () => {
               },
               observedTemporalFields: { creation_date: 1, date: 2 },
               resourceStates: expect.arrayContaining([
-                { resource: "hosts", recordCount: 1, state: "partial", warningCount: 1, errorCount: 2 },
+                { resource: "hosts", recordCount: 1, state: "collected", warningCount: 0, errorCount: 0 },
                 { resource: "vms", recordCount: 1, state: "collected", warningCount: 1, errorCount: 0 },
                 { resource: "networks", recordCount: 0, state: "failed", warningCount: 0, errorCount: 1 },
                 { resource: "vmSnapshots", recordCount: 4, state: "partial", warningCount: 1, errorCount: 1 },
                 { resource: "affinityGroups", recordCount: 0, state: "failed", warningCount: 0, errorCount: 1 }
               ]),
               issueFingerprints: expect.arrayContaining([
-                {
-                  fingerprint: "error:hosts:host_certificate_detail:http_4xx",
-                  severity: "error",
-                  resource: "hosts",
-                  operation: "host_certificate_detail",
-                  failureCategory: "http_4xx",
-                  httpStatusClass: "4xx",
-                  count: 2
-                },
                 {
                   fingerprint: "error:affinityGroups:child_collection:timeout",
                   severity: "error",
@@ -195,7 +184,6 @@ describe("snapshot age diagnostics", () => {
         ]
       }
     });
-    expect(response.body).not.toContain("private-manager-name");
     expect(response.body).not.toContain("private-manager.example");
     expect(response.body).not.toContain("private-vm");
     expect(response.body).not.toContain("private-snapshot");
@@ -259,44 +247,6 @@ describe("snapshot age diagnostics", () => {
     expect(response.body).not.toContain("private-warning-message");
     expect(response.body).not.toContain("private-user");
     expect(response.body).not.toContain("private-token");
-    await app.close();
-  });
-
-  it("classifies invalid host detail responses without exposing upstream details", async () => {
-    const { app, cookie } = await authenticatedApp();
-    const managerId = await createManager(app, cookie);
-    const payload = snapshot(managerId);
-    payload.warnings = [];
-    payload.errors = [{ resource: "hosts", message: "private-host certificate detail collection failed: oVirt returned an invalid resource response" }];
-
-    const saved = await app.inject({ method: "POST", url: "/api/snapshots", cookies: cookie, payload });
-    expect(saved.statusCode).toBe(201);
-
-    const response = await app.inject({ method: "GET", url: "/api/diagnostics/snapshot-age", cookies: cookie });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
-      diagnostics: {
-        managers: [
-          {
-            latestInventoryRun: {
-              issueFingerprints: [
-                {
-                  fingerprint: "error:hosts:host_certificate_detail:invalid_response",
-                  severity: "error",
-                  resource: "hosts",
-                  operation: "host_certificate_detail",
-                  failureCategory: "invalid_response",
-                  count: 1
-                }
-              ]
-            }
-          }
-        ]
-      }
-    });
-    expect(response.body).not.toContain("private-host");
-    expect(response.body).not.toContain("invalid resource response");
     await app.close();
   });
 

@@ -1,6 +1,7 @@
 import { Activity, ClipboardCopy, Download, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import appPackage from "../../package.json";
+import { redactedDiagnosticsReport } from "../../shared/diagnostics-report";
 import {
   getSnapshotAgeDiagnostics,
   type DiagnosticFailureCategory,
@@ -44,8 +45,6 @@ const resourceLabels: Record<DiagnosticResourceKey, string> = {
 const operationLabels: Record<DiagnosticIssueOperation, string> = {
   resource_list: "resource list",
   child_collection: "child collection",
-  host_certificate_detail: "host certificate detail",
-  host_certificate_expiry: "host certificate expiry",
   snapshot_list: "snapshot list",
   snapshot_detail: "snapshot detail",
   snapshot_date: "snapshot date",
@@ -130,20 +129,12 @@ export function SnapshotAgeDiagnosticsPage() {
     void loadDiagnostics();
   }, [loadDiagnostics]);
 
-  const report = useMemo(
-    () =>
-      diagnostics
-        ? JSON.stringify(
-            {
-              appVersion: appPackage.version,
-              ...diagnostics
-            },
-            null,
-            2
-          )
-        : "",
-    [diagnostics]
-  );
+  const report = useMemo(() => {
+    if (!diagnostics) {
+      return "";
+    }
+    return redactedDiagnosticsReport(appPackage.version, diagnostics);
+  }, [diagnostics]);
 
   async function copyReport() {
     if (!report) {
@@ -304,7 +295,7 @@ export function SnapshotAgeDiagnosticsPage() {
                 <article className="diagnostic-run" key={manager.label}>
                   <div className="diagnostic-run-heading">
                     <div>
-                      <h3>{manager.label}</h3>
+                      <h3>{manager.name}</h3>
                       <p>{manager.enabled ? "Enabled manager" : "Disabled manager"}</p>
                     </div>
                     {run ? <span className={`state-pill status-${stateClass(run.status)}`}>{run.status}</span> : <span className="state-pill status-muted">No run</span>}
@@ -371,7 +362,7 @@ export function SnapshotAgeDiagnosticsPage() {
                         )}
                       </section>
 
-                      <div className="diagnostic-findings" aria-label={`${manager.label} snapshot date findings`}>
+                      <div className="diagnostic-findings" aria-label={`${manager.name} snapshot date findings`}>
                         {run.findings.map((finding) => <span className="state-pill status-muted" key={finding}>{findingLabels[finding]}</span>)}
                       </div>
                     </>

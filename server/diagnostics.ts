@@ -35,6 +35,7 @@ interface SnapshotRow {
 
 interface ManagerRow {
   id: string;
+  name: string;
   enabled: number;
 }
 
@@ -51,8 +52,6 @@ type DiagnosticIssueSeverity = "warning" | "error";
 type DiagnosticIssueOperation =
   | "resource_list"
   | "child_collection"
-  | "host_certificate_detail"
-  | "host_certificate_expiry"
   | "snapshot_list"
   | "snapshot_detail"
   | "snapshot_date"
@@ -105,6 +104,7 @@ export interface SnapshotAgeDiagnostics {
   managerCount: number;
   managers: Array<{
     label: string;
+    name: string;
     enabled: boolean;
     latestInventoryRun?: SnapshotAgeDiagnosticRun;
   }>;
@@ -132,7 +132,7 @@ export function registerDiagnosticRoutes(app: FastifyInstance, db: SqliteDatabas
 }
 
 export function snapshotAgeDiagnostics(db: SqliteDatabase): SnapshotAgeDiagnostics {
-  const managers = db.prepare("SELECT id, enabled FROM managers ORDER BY name COLLATE NOCASE, id").all() as ManagerRow[];
+  const managers = db.prepare("SELECT id, name, enabled FROM managers ORDER BY name COLLATE NOCASE, id").all() as ManagerRow[];
   return {
     reportVersion: 2,
     generatedAt: new Date().toISOString(),
@@ -141,6 +141,7 @@ export function snapshotAgeDiagnostics(db: SqliteDatabase): SnapshotAgeDiagnosti
       const latestRun = latestInventoryRun(db, manager.id);
       return {
         label: `Manager ${index + 1}`,
+        name: manager.name,
         enabled: Boolean(manager.enabled),
         ...(latestRun ? { latestInventoryRun: summarizeSnapshot(latestRun) } : {})
       };
@@ -229,12 +230,6 @@ function diagnosticIssueFingerprints(warnings: CollectionIssue[], errors: Collec
 
 function diagnosticIssueOperation(issue: CollectionIssue): DiagnosticIssueOperation {
   const message = issue.message.toLowerCase();
-  if (issue.resource === "hosts" && message.includes("certificate detail collection failed")) {
-    return "host_certificate_detail";
-  }
-  if (issue.resource === "hosts" && message.includes("certificate expiry is unavailable")) {
-    return "host_certificate_expiry";
-  }
   if (issue.resource === "vmSnapshots" && message.includes("snapshots collection failed")) {
     return "snapshot_list";
   }
