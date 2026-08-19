@@ -37,6 +37,7 @@ import {
   getDashboard,
   getDashboardCluster,
   getRelationships,
+  getScheduler,
   getSettings,
   getSnapshot,
   getSnapshotHostInventory,
@@ -63,6 +64,7 @@ import {
   type ManagerInput,
   type ManagerTestCollectionResult,
   type RelationshipResponse,
+  type SchedulerResponse,
   type SnapshotDetail,
   type SnapshotHostInventoryFilters,
   type SnapshotHostInventoryResponse,
@@ -80,6 +82,7 @@ import { RelationshipReportBuilder } from "./RelationshipReportBuilder";
 import { CapacityPage } from "./CapacityPage";
 import { collectManagersSequentially } from "./manager-collection";
 import { SnapshotAgeDiagnosticsPage } from "./SnapshotAgeDiagnosticsPage";
+import { formatHongKongDateTime } from "../../shared/time";
 
 type PageId = "dashboard" | "inventory" | "capacity" | "relationships" | "managers" | "history" | "settings" | "diagnostics" | "cluster";
 type SnapshotFilters = { managerId: string; status: string };
@@ -177,7 +180,9 @@ export function App() {
   const [relationshipsLoading, setRelationshipsLoading] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settings, setSettings] = useState<AppSettings | undefined>();
+  const [schedulerStatus, setSchedulerStatus] = useState<SchedulerResponse | undefined>();
   const [settingsError, setSettingsError] = useState("");
+  const [schedulerError, setSchedulerError] = useState("");
   const [settingsMessage, setSettingsMessage] = useState("");
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
@@ -208,6 +213,8 @@ export function App() {
       setHostInventory(undefined);
       setRelationships(undefined);
       setSettings(undefined);
+      setSchedulerStatus(undefined);
+      setSchedulerError("");
       setSavedViews([]);
       setSelectedSavedViewId("");
       setSavedViewName("");
@@ -344,6 +351,8 @@ export function App() {
     setHostInventory(undefined);
     setRelationships(undefined);
     setSettings(undefined);
+    setSchedulerStatus(undefined);
+    setSchedulerError("");
     setSavedViews([]);
     setSelectedSavedViewId("");
     setSavedViewName("");
@@ -380,8 +389,19 @@ export function App() {
   async function loadSettings() {
     setSettingsLoading(true);
     setSettingsError("");
+    setSchedulerError("");
     try {
       setSettings(await getSettings());
+      if (session.user?.role === "admin") {
+        try {
+          setSchedulerStatus(await getScheduler());
+        } catch (error) {
+          setSchedulerStatus(undefined);
+          setSchedulerError(error instanceof Error ? error.message : "Scheduler status failed");
+        }
+      } else {
+        setSchedulerStatus(undefined);
+      }
     } catch (error) {
       setSettingsError(error instanceof Error ? error.message : "Settings failed");
     } finally {
@@ -1172,8 +1192,10 @@ export function App() {
                     <span className="state-pill">
                       Retention: {settings.snapshotRetentionDays === 0 ? "keep indefinitely" : `${settings.snapshotRetentionDays} days`}
                     </span>
-                    <span className="state-pill">{settings.updatedAt ? `Updated: ${new Date(settings.updatedAt).toLocaleString()}` : "Using defaults"}</span>
+                    <span className="state-pill">{settings.updatedAt ? `Updated: ${formatHongKongDateTime(settings.updatedAt)}` : "Using defaults"}</span>
                   </div>
+                  {schedulerStatus && <SchedulerStatusSummary scheduler={schedulerStatus} />}
+                  {schedulerError && <p className="form-error" role="alert">Scheduler status: {schedulerError}</p>}
                   <div className="manager-actions form-actions">
                     <button className="button" type="submit" disabled={settingsSaving} aria-busy={settingsSaving}>
                       <Save aria-hidden="true" size={16} />
@@ -1835,6 +1857,38 @@ function hostInventoryStatusClass(status: string | undefined) {
     return "status-warning";
   }
   return "status-muted";
+}
+
+function SchedulerStatusSummary({ scheduler }: { scheduler: SchedulerResponse }) {
+  const inventory = scheduler.schedules.find((schedule) => schedule.jobType === "inventory");
+  const metrics = scheduler.schedules.find((schedule) => schedule.jobType === "metrics");
+
+  return (
+    <section className="settings-scheduler-summary" aria-label="Scheduler status">
+      <h4>Scheduler Status</h4>
+      <div className="settings-summary-row">
+        <span className={`state-pill ${scheduler.scheduler.running ? "status-success" : "status-danger"}`}>
+          {scheduler.scheduler.running ? "Scheduler running" : "Scheduler stopped"}
+        </span>
+        {scheduler.scheduler.lastErrorAt && <span className="state-pill status-warning">Worker issue: {formatHongKongDateTime(scheduler.scheduler.lastErrorAt)}</span>}
+        <ScheduleStatusPill label="Inventory" schedule={inventory} />
+        <ScheduleStatusPill label="Metrics" schedule={metrics} />
+      </div>
+    </section>
+  );
+}
+
+function ScheduleStatusPill({ label, schedule }: { label: string; schedule: SchedulerResponse["schedules"][number] | undefined }) {
+  if (!schedule || !schedule.enabled) {
+    return <span className="state-pill status-muted">{label}: disabled</span>;
+  }
+  if (schedule.lastResult === "failed") {
+    return <span className="state-pill status-danger">{label}: failed, next {schedule.nextRunAt ? formatHongKongDateTime(schedule.nextRunAt) : "pending"}</span>;
+  }
+  if (schedule.lastResult === "partial") {
+    return <span className="state-pill status-warning">{label}: partial, next {schedule.nextRunAt ? formatHongKongDateTime(schedule.nextRunAt) : "pending"}</span>;
+  }
+  return <span className="state-pill status-success">{label}: next {schedule.nextRunAt ? formatHongKongDateTime(schedule.nextRunAt) : "pending"}</span>;
 }
 
 function formatHostWorkload(host: SnapshotHostInventoryResponse["rows"][number]) {

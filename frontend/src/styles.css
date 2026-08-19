@@ -1351,6 +1351,18 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.settings-scheduler-summary {
+  display: grid;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.settings-scheduler-summary h4 {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
 .manager-option-row {
   flex-wrap: wrap;
   justify-content: space-between;

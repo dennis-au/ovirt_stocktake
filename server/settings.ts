@@ -4,6 +4,7 @@ import { recordAudit } from "./audit.js";
 import type { AppConfig } from "./config.js";
 import type { SqliteDatabase } from "./db.js";
 import { requireRole, roles } from "./rbac.js";
+import { sqliteUtcTimestampToIso } from "../shared/time.js";
 
 const snapshotIntervalKey = "setting.snapshot_interval_minutes";
 const snapshotRetentionKey = "setting.snapshot_retention_days";
@@ -203,7 +204,7 @@ function latestUpdatedAt(db: SqliteDatabase, keys: string[]): string | undefined
   const row = db
     .prepare(`SELECT updated_at FROM app_metadata WHERE key IN (${placeholders}) ORDER BY updated_at DESC LIMIT 1`)
     .get(...keys) as Pick<SettingRow, "updated_at"> | undefined;
-  return row?.updated_at;
+  return sqliteUtcTimestampToIso(row?.updated_at);
 }
 
 function positiveInteger(value: unknown): number | undefined {

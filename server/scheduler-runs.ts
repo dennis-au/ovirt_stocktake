@@ -38,6 +38,13 @@ export interface SchedulerDispatchRun {
   createdAt: string;
 }
 
+export interface StaleSchedulerRunJob {
+  runId: string;
+  jobType: ScheduledJobType;
+  managerId: string;
+  queueJobId?: string;
+}
+
 export async function createSchedulerRun(
   db: PostgresQueryable,
   jobType: ScheduledJobType,
@@ -68,6 +75,71 @@ export async function getSchedulerRun(db: PostgresQueryable, runId: string): Pro
 export async function hasActiveSchedulerRun(db: PostgresQueryable, jobType: ScheduledJobType): Promise<boolean> {
   const result = await db.query("SELECT 1 FROM scheduler_dispatch_runs WHERE job_type = $1 AND completed_at IS NULL LIMIT 1", [jobType]);
   return (result.rowCount ?? 0) > 0;
+}
+
+export async function recoverStaleSchedulerRuns(
+  db: PostgresQueryable,
+  now = new Date(),
+  staleAfterMs = 20 * 60_000
+): Promise<SchedulerDispatchRun[]> {
+  const cutoff = new Date(now.getTime() - staleAfterMs).toISOString();
+  const staleRuns = await db.query<{ id: string }>(
+    `SELECT id
+     FROM scheduler_dispatch_runs
+     WHERE completed_at IS NULL
+       AND created_at < $1
+     ORDER BY created_at, id`,
+    [cutoff]
+  );
+  const recovered: SchedulerDispatchRun[] = [];
+
+  for (const { id } of staleRuns.rows) {
+    await db.query(
+      `UPDATE scheduler_dispatch_run_managers
+       SET
+         status = 'skipped',
+         completed_at = CURRENT_TIMESTAMP,
+         error_summary = COALESCE(error_summary, 'Scheduled job expired without worker completion; skipped until next scheduled run')
+       WHERE run_id = $1
+         AND status IN ('pending', 'queued', 'running')`,
+      [id]
+    );
+    const completed = await finalizeSchedulerRun(db, id);
+    if (completed) {
+      recovered.push(completed);
+    }
+  }
+
+  return recovered;
+}
+
+export async function listStaleSchedulerRunJobs(
+  db: PostgresQueryable,
+  now = new Date(),
+  staleAfterMs = 20 * 60_000
+): Promise<StaleSchedulerRunJob[]> {
+  const cutoff = new Date(now.getTime() - staleAfterMs).toISOString();
+  const result = await db.query<{
+    run_id: string;
+    job_type: ScheduledJobType;
+    manager_id: string;
+    queue_job_id: string | null;
+  }>(
+    `SELECT run.id AS run_id, run.job_type, manager.manager_id, manager.queue_job_id
+     FROM scheduler_dispatch_runs run
+     JOIN scheduler_dispatch_run_managers manager ON manager.run_id = run.id
+     WHERE run.completed_at IS NULL
+       AND run.created_at < $1
+       AND manager.status IN ('pending', 'queued', 'running')
+     ORDER BY run.created_at, run.id, manager.manager_id`,
+    [cutoff]
+  );
+  return result.rows.map((row) => ({
+    runId: row.run_id,
+    jobType: row.job_type,
+    managerId: row.manager_id,
+    ...(row.queue_job_id ? { queueJobId: row.queue_job_id } : {})
+  }));
 }
 
 export async function markSchedulerRunManagerQueued(

@@ -5,7 +5,8 @@ import {
   createSchedulerRun,
   getSchedulerRun,
   markSchedulerRunManagerQueued,
-  markSchedulerRunManagerStarted
+  markSchedulerRunManagerStarted,
+  recoverStaleSchedulerRuns
 } from "../server/scheduler-runs.js";
 import { migratePostgres, type PostgresQueryable } from "../server/postgres/migrate.js";
 
@@ -80,5 +81,18 @@ describe("scheduler dispatch runs", () => {
       completedManagerCount: 1,
       failedManagerCount: 1
     });
+  });
+
+  it("skips abandoned manager jobs and releases a stale dispatch run", async () => {
+    const db = await memoryPostgres();
+    const run = await createSchedulerRun(db, "inventory", ["manager-1", "manager-2"]);
+    await markSchedulerRunManagerQueued(db, run.id, "manager-1", "job-1");
+    await markSchedulerRunManagerQueued(db, run.id, "manager-2", "job-2");
+    await db.query("UPDATE scheduler_dispatch_runs SET created_at = CURRENT_TIMESTAMP - INTERVAL '21 minutes' WHERE id = $1", [run.id]);
+
+    const recovered = await recoverStaleSchedulerRuns(db, new Date(), 20 * 60_000);
+
+    expect(recovered).toEqual([expect.objectContaining({ id: run.id, status: "partial", completedManagerCount: 2 })]);
+    expect(await getSchedulerRun(db, run.id)).toMatchObject({ status: "partial", completedManagerCount: 2 });
   });
 });

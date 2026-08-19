@@ -9,7 +9,7 @@ import {
 import { openDatabase, type SqliteDatabase } from "../server/db.js";
 import type { ConnectablePostgres } from "../server/postgres/inventory.js";
 import { migratePostgres, type PostgresQueryable } from "../server/postgres/migrate.js";
-import { getSchedulerRun } from "../server/scheduler-runs.js";
+import { createSchedulerRun, getSchedulerRun, markSchedulerRunManagerQueued } from "../server/scheduler-runs.js";
 import { listScheduleStates } from "../server/scheduler-state.js";
 import { saveAppSettings } from "../server/settings.js";
 import { testConfig } from "./health.test.js";
@@ -41,17 +41,27 @@ async function memoryPostgres() {
 
 class FakeQueue implements DurableJobQueue {
   readonly queues: string[] = [];
+  readonly queueOptions = new Map<string, object | undefined>();
   readonly schedules: Array<{ name: string; cron: string }> = [];
   readonly sent: Array<{ name: string; data: object; options?: object }> = [];
+  readonly cancelled: Array<{ name: string; id: string }> = [];
   readonly workers = new Map<string, (jobs: QueueJob<object>[]) => Promise<QueueJobResult[]>>();
   readonly workerOptions = new Map<string, object>();
+  private errorHandler?: (error: unknown) => void;
 
   constructor(private readonly sendResults?: Array<string | null | Error>) {}
 
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
-  async createQueue(name: string): Promise<void> {
+  async createQueue(name: string, options?: object): Promise<void> {
     this.queues.push(name);
+    this.queueOptions.set(name, options);
+  }
+  async updateQueue(name: string, options?: object): Promise<void> {
+    this.queueOptions.set(name, options);
+  }
+  async cancel(name: string, id: string): Promise<void> {
+    this.cancelled.push({ name, id });
   }
   async schedule(name: string, cron: string): Promise<void> {
     this.schedules.push({ name, cron });
@@ -70,6 +80,12 @@ class FakeQueue implements DurableJobQueue {
       return result ?? null;
     }
     return `${name}-${this.sent.length}`;
+  }
+  onError(handler: (error: unknown) => void): void {
+    this.errorHandler = handler;
+  }
+  emitError(error: unknown): void {
+    this.errorHandler?.(error);
   }
 }
 
@@ -132,6 +148,7 @@ describe("durable scheduler", () => {
     ]);
     expect(queue.sent.every((job) => (job.options as { singletonKey?: string }).singletonKey?.startsWith("inventory:"))).toBe(true);
     expect(queue.workerOptions.get("scheduler.inventory-manager-collect")).toMatchObject({ includeMetadata: true });
+    expect(queue.queueOptions.get("scheduler.inventory-manager-collect")).toMatchObject({ retryLimit: 0, expireInSeconds: 900 });
 
     const runId = (queue.sent[0]?.data as { runId: string }).runId;
     expect(await getSchedulerRun(inventoryDb, runId)).toMatchObject({
@@ -200,7 +217,7 @@ describe("durable scheduler", () => {
     await scheduler.stop();
   });
 
-  it("keeps a dispatch active through a transient manager retry and finalizes it after the successful retry", async () => {
+  it("marks a failed scheduled collection terminally and does not retry it", async () => {
     const db = memoryDatabase();
     db.prepare(
       `INSERT INTO managers (id, name, url, enabled, username_ciphertext, password_ciphertext)
@@ -220,9 +237,13 @@ describe("durable scheduler", () => {
         collector: { ...testConfig().collector, enabled: true }
       })
     });
-    collectManagerSnapshotById
-      .mockResolvedValueOnce({ id: "snapshot-1", status: "failed", warningsCount: 0, errorsCount: 1, errors: [{ message: "temporary network failure" }] })
-      .mockResolvedValueOnce({ id: "snapshot-2", status: "success", warningsCount: 0, errorsCount: 0, errors: [] });
+    collectManagerSnapshotById.mockResolvedValueOnce({
+      id: "snapshot-1",
+      status: "failed",
+      warningsCount: 0,
+      errorsCount: 1,
+      errors: [{ message: "temporary network failure" }]
+    });
 
     await scheduler.start();
     await inventoryDb.query("UPDATE scheduler_schedule_state SET next_run_at = CURRENT_TIMESTAMP - INTERVAL '1 minute' WHERE job_type = $1", ["inventory"]);
@@ -233,13 +254,88 @@ describe("durable scheduler", () => {
     const worker = queue.workers.get("scheduler.inventory-manager-collect");
     expect(worker).toBeDefined();
 
-    const firstAttempt = await worker?.([{ id: "job-1", data: queuedJob?.data ?? {}, retryCount: 0, retryLimit: 1 }]);
-    expect(firstAttempt).toEqual([expect.objectContaining({ id: "job-1", status: "failed" })]);
-    expect(await getSchedulerRun(inventoryDb, runId)).toMatchObject({ status: "running", completedManagerCount: 0 });
+    const firstAttempt = await worker?.([{ id: "job-1", data: queuedJob?.data ?? {}, retryCount: 0, retryLimit: 3 }]);
+    expect(firstAttempt).toEqual([expect.objectContaining({ id: "job-1", status: "deadletter" })]);
+    expect(await getSchedulerRun(inventoryDb, runId)).toMatchObject({ status: "failed", completedManagerCount: 1, failedManagerCount: 1 });
 
-    const secondAttempt = await worker?.([{ id: "job-1", data: queuedJob?.data ?? {}, retryCount: 1, retryLimit: 1 }]);
-    expect(secondAttempt).toEqual([expect.objectContaining({ id: "job-1", status: "completed" })]);
-    expect(await getSchedulerRun(inventoryDb, runId)).toMatchObject({ status: "success", completedManagerCount: 1 });
+    const lateAttempt = await worker?.([{ id: "job-1", data: queuedJob?.data ?? {}, retryCount: 1, retryLimit: 3 }]);
+    expect(lateAttempt).toEqual([expect.objectContaining({ id: "job-1", status: "completed", output: { skipped: true } })]);
+    expect(collectManagerSnapshotById).toHaveBeenCalledTimes(1);
+    await scheduler.stop();
+  });
+
+  it("discards an untracked legacy scheduled job without collecting a manager", async () => {
+    const db = memoryDatabase();
+    const inventoryDb = (await memoryPostgres()) as ConnectablePostgres;
+    const queue = new FakeQueue();
+    const scheduler = createDurableScheduler({
+      db,
+      inventoryDb,
+      queue,
+      config: testConfig({
+        credentialEncryptionKey: "test-encryption-key-that-is-long-enough",
+        postgres: { databaseUrl: "postgres://scheduler@example.local/ovirt", ssl: false },
+        metrics: { backend: "postgres" },
+        collector: { ...testConfig().collector, enabled: true }
+      })
+    });
+    collectManagerSnapshotById.mockReset();
+
+    await scheduler.start();
+    const worker = queue.workers.get("scheduler.inventory-manager-collect");
+    const result = await worker?.([{ id: "legacy-job", data: { managerId: "manager-1" } }]);
+
+    expect(result).toEqual([expect.objectContaining({ id: "legacy-job", status: "deadletter" })]);
+    expect(collectManagerSnapshotById).not.toHaveBeenCalled();
+    await scheduler.stop();
+  });
+
+  it("cancels stale queued jobs before releasing their dispatch run", async () => {
+    const db = memoryDatabase();
+    const inventoryDb = (await memoryPostgres()) as ConnectablePostgres;
+    const staleRun = await createSchedulerRun(inventoryDb, "inventory", ["manager-1"]);
+    await markSchedulerRunManagerQueued(inventoryDb, staleRun.id, "manager-1", "stale-job-1");
+    await inventoryDb.query("UPDATE scheduler_dispatch_runs SET created_at = CURRENT_TIMESTAMP - INTERVAL '21 minutes' WHERE id = $1", [staleRun.id]);
+    const queue = new FakeQueue();
+    const scheduler = createDurableScheduler({
+      db,
+      inventoryDb,
+      queue,
+      config: testConfig({
+        credentialEncryptionKey: "test-encryption-key-that-is-long-enough",
+        postgres: { databaseUrl: "postgres://scheduler@example.local/ovirt", ssl: false },
+        metrics: { backend: "postgres" },
+        collector: { ...testConfig().collector, enabled: true }
+      })
+    });
+
+    await scheduler.start();
+
+    expect(queue.cancelled).toEqual([{ name: "scheduler.inventory-manager-collect", id: "stale-job-1" }]);
+    expect(await getSchedulerRun(inventoryDb, staleRun.id)).toMatchObject({ status: "partial", completedManagerCount: 1 });
+    await scheduler.stop();
+  });
+
+  it("records queue worker errors without stopping the scheduler", async () => {
+    const db = memoryDatabase();
+    const inventoryDb = (await memoryPostgres()) as ConnectablePostgres;
+    const queue = new FakeQueue();
+    const scheduler = createDurableScheduler({
+      db,
+      inventoryDb,
+      queue,
+      config: testConfig({
+        credentialEncryptionKey: "test-encryption-key-that-is-long-enough",
+        postgres: { databaseUrl: "postgres://scheduler@example.local/ovirt", ssl: false },
+        metrics: { backend: "postgres" },
+        collector: { ...testConfig().collector, enabled: true }
+      })
+    });
+
+    await scheduler.start();
+    queue.emitError({ message: "manager worker stopped" });
+
+    expect(scheduler.status).toMatchObject({ running: true, lastError: "manager worker stopped", lastErrorAt: expect.any(String) });
     await scheduler.stop();
   });
 });

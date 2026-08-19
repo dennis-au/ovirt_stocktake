@@ -18,7 +18,7 @@ Supported platforms:
 Release image:
 
 ```bash
-docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.31
+docker pull ghcr.io/dennis-au/ovirt_stocktake:v0.1.32
 ```
 
 ## Quick Start With Docker Compose
@@ -46,12 +46,12 @@ To use a different published image, set `OVIRT_INVENTORY_IMAGE` in `.env`. For e
 
 ## Downloadable Compose Bundle
 
-Each GitHub release includes an `ovirt-inventory-compose-v0.1.31.tar.gz` deployment bundle containing `compose.yaml`, empty `inventory_data/` and `postgres_data/` folders, `.env.example`, `setup.sh`, and this README. Download, extract, generate the editable `.env`, then start the app:
+Each GitHub release includes an `ovirt-inventory-compose-v0.1.32.tar.gz` deployment bundle containing `compose.yaml`, empty `inventory_data/` and `postgres_data/` folders, `.env.example`, `setup.sh`, and this README. Download, extract, generate the editable `.env`, then start the app:
 
 ```bash
-curl -LO https://github.com/dennis-au/ovirt_stocktake/releases/download/v0.1.31/ovirt-inventory-compose-v0.1.31.tar.gz
-tar -xzf ovirt-inventory-compose-v0.1.31.tar.gz
-cd ovirt-inventory-compose-v0.1.31
+curl -LO https://github.com/dennis-au/ovirt_stocktake/releases/download/v0.1.32/ovirt-inventory-compose-v0.1.32.tar.gz
+tar -xzf ovirt-inventory-compose-v0.1.32.tar.gz
+cd ovirt-inventory-compose-v0.1.32
 ./setup.sh
 # Optionally edit .env, for example to change the host port.
 docker compose pull
@@ -92,7 +92,7 @@ Capacity uses collected oVirt VM and host statistics plus storage-domain utiliza
 
 Admins can open **Settings** in the app to configure miscellaneous snapshot policy:
 
-- Inventory and Capacity metrics collection can each be enabled or disabled in Settings, with a user-configurable interval from 1 to 1440 minutes. PostgreSQL-backed pg-boss workers persist schedules, retries, and dead letters across application restarts.
+- Inventory and Capacity metrics collection can each be enabled or disabled in Settings, with a user-configurable interval from 1 to 1440 minutes. PostgreSQL-backed pg-boss workers persist schedules and dead letters across application restarts; failed scheduled jobs are skipped until the next configured interval.
 - `OVIRT_INVENTORY_COLLECTOR_ENABLED=false` remains a deployment-level master switch. Environment interval values only provide initial defaults until an administrator changes the values in Settings.
 - Snapshot data retention in days. Set `0` to keep snapshot history indefinitely. When set above `0`, snapshots older than the retention window are pruned after settings are saved and after future collection runs.
 

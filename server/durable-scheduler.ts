@@ -12,6 +12,8 @@ import {
   hasActiveSchedulerRun,
   markSchedulerRunManagerQueued,
   markSchedulerRunManagerStarted,
+  listStaleSchedulerRunJobs,
+  recoverStaleSchedulerRuns,
   type SchedulerDispatchRun
 } from "./scheduler-runs.js";
 import {
@@ -31,17 +33,17 @@ const metricsDispatchQueue = "scheduler.metrics-dispatch";
 const metricsManagerQueue = "scheduler.metrics-manager-collect";
 const deadLetterQueue = "scheduler.dead-letter";
 const dispatchCron = "* * * * *";
+const managerJobExpirySeconds = 900;
 
 const managerQueueOptions: QueueOptions = {
-  expireInSeconds: 900,
+  expireInSeconds: managerJobExpirySeconds,
   retentionSeconds: 14 * 24 * 60 * 60,
   deleteAfterSeconds: 7 * 24 * 60 * 60,
-  retryLimit: 3,
-  retryDelay: 30,
-  retryBackoff: true,
-  retryDelayMax: 15 * 60,
+  retryLimit: 0,
   heartbeatSeconds: 30
 };
+
+const staleRunAfterMs = managerJobExpirySeconds * 1000 + 5 * 60_000;
 
 const managerQueueDefinition: Omit<Queue, "name"> = {
   ...managerQueueOptions,
@@ -65,9 +67,12 @@ export interface DurableJobQueue {
   start(): Promise<void>;
   stop(): Promise<void>;
   createQueue(name: string, options?: object): Promise<void>;
+  updateQueue(name: string, options?: object): Promise<void>;
+  cancel(name: string, id: string): Promise<void>;
   schedule(name: string, cron: string): Promise<void>;
   work(name: string, options: object, handler: (jobs: QueueJob[]) => Promise<QueueJobResult[]>): Promise<void>;
   send(name: string, data: object, options?: object): Promise<string | null>;
+  onError?(handler: (error: unknown) => void): void;
 }
 
 export interface DurableScheduler {
@@ -83,6 +88,7 @@ export interface DurableSchedulerStatus {
   available: boolean;
   running: boolean;
   lastError?: string;
+  lastErrorAt?: string;
 }
 
 interface DurableSchedulerOptions {
@@ -109,9 +115,14 @@ class PgBossScheduler implements DurableScheduler {
   private readonly queue: DurableJobQueue;
   private running = false;
   private lastError?: string;
+  private lastErrorAt?: string;
 
   constructor(private readonly options: DurableSchedulerOptions) {
     this.queue = options.queue ?? createPgBossQueue(options.config);
+    this.queue.onError?.((error) => {
+      this.lastError = errorMessage(error);
+      this.lastErrorAt = new Date().toISOString();
+    });
   }
 
   get status(): DurableSchedulerStatus {
@@ -119,7 +130,7 @@ class PgBossScheduler implements DurableScheduler {
       backend: "pg-boss",
       available: true,
       running: this.running,
-      ...(this.lastError ? { lastError: this.lastError } : {})
+      ...(this.lastError ? { lastError: this.lastError, lastErrorAt: this.lastErrorAt } : {})
     };
   }
 
@@ -131,12 +142,14 @@ class PgBossScheduler implements DurableScheduler {
     try {
       await this.queue.start();
       await this.createQueues();
+      await this.syncSettings();
+      await this.recoverStaleRuns();
       await this.registerWorkers();
       await this.queue.schedule(inventoryDispatchQueue, dispatchCron);
       await this.queue.schedule(metricsDispatchQueue, dispatchCron);
-      await this.syncSettings();
       this.running = true;
       this.lastError = undefined;
+      this.lastErrorAt = undefined;
     } catch (error) {
       this.lastError = errorMessage(error);
       await this.queue.stop().catch(() => undefined);
@@ -157,6 +170,7 @@ class PgBossScheduler implements DurableScheduler {
   }
 
   async dispatchDue(jobType: ScheduledJobType): Promise<void> {
+    await this.recoverStaleRuns();
     if (await hasActiveSchedulerRun(this.options.inventoryDb, jobType)) {
       return;
     }
@@ -217,6 +231,8 @@ class PgBossScheduler implements DurableScheduler {
     await this.queue.createQueue(metricsDispatchQueue, managerQueueOptions);
     await this.queue.createQueue(inventoryManagerQueue, managerQueueDefinition);
     await this.queue.createQueue(metricsManagerQueue, managerQueueDefinition);
+    await this.queue.updateQueue(inventoryManagerQueue, managerQueueOptions);
+    await this.queue.updateQueue(metricsManagerQueue, managerQueueOptions);
   }
 
   private async registerWorkers(): Promise<void> {
@@ -255,16 +271,16 @@ class PgBossScheduler implements DurableScheduler {
 
   private async runInventoryManagerJob(job: QueueJob<ManagerJobData>): Promise<QueueJobResult> {
     const { managerId, runId } = job.data;
+    if (!runId) {
+      this.recordLegacyJobDiscarded("inventory", managerId, job.id);
+      return skippedFailureQueueResult(job.id, "Scheduled job is missing its dispatch run and was skipped");
+    }
     if (!(await this.startManagerRun("inventory", runId, managerId))) {
       return { id: job.id, status: "completed", output: { skipped: true } };
     }
     try {
       const snapshot = await collectManagerSnapshotById(this.options.db, this.options.config, managerId, this.options.inventoryDb);
       const errorSummary = snapshot.errors.map((issue) => issue.message).join("; ") || undefined;
-      if (this.shouldRetry(job, snapshot.status, errorSummary)) {
-        this.recordRetryingManagerJob("inventory", managerId, errorSummary ?? "Scheduled inventory collection failed", job);
-        return failedQueueResult(job.id, errorSummary ?? "Scheduled inventory collection failed");
-      }
       await this.completeManagerRun("inventory", runId, managerId, snapshot.status, errorSummary);
       recordAudit(this.options.db, {
         actor: "scheduler",
@@ -275,15 +291,11 @@ class PgBossScheduler implements DurableScheduler {
       });
 
       if (snapshot.status === "failed") {
-        return failedQueueResult(job.id, errorSummary ?? "Scheduled inventory collection failed");
+        return skippedFailureQueueResult(job.id, errorSummary ?? "Scheduled inventory collection failed");
       }
       return { id: job.id, status: "completed", output: { snapshotId: snapshot.id, status: snapshot.status } };
     } catch (error) {
       const message = errorMessage(error);
-      if (this.shouldRetry(job, "failed", message)) {
-        this.recordRetryingManagerJob("inventory", managerId, message, job);
-        return failedQueueResult(job.id, message);
-      }
       await this.completeManagerRun("inventory", runId, managerId, "failed", message);
       recordAudit(this.options.db, {
         actor: "scheduler",
@@ -292,12 +304,16 @@ class PgBossScheduler implements DurableScheduler {
         resourceId: managerId,
         metadata: { message }
       });
-      return failedQueueResult(job.id, message);
+      return skippedFailureQueueResult(job.id, message);
     }
   }
 
   private async runMetricsManagerJob(job: QueueJob<ManagerJobData>): Promise<QueueJobResult> {
     const { managerId, runId } = job.data;
+    if (!runId) {
+      this.recordLegacyJobDiscarded("metrics", managerId, job.id);
+      return skippedFailureQueueResult(job.id, "Scheduled job is missing its dispatch run and was skipped");
+    }
     if (!(await this.startManagerRun("metrics", runId, managerId))) {
       return { id: job.id, status: "completed", output: { skipped: true } };
     }
@@ -305,10 +321,6 @@ class PgBossScheduler implements DurableScheduler {
       const result = await collectManagerMetricsById(this.options.db, this.options.config, managerId, this.options.inventoryDb);
       const errorSummary = result.errors.map((issue) => issue.message).join("; ") || undefined;
       const status: ScheduleResult = result.errors.length === 0 ? "success" : result.sampleCount > 0 ? "partial" : "failed";
-      if (this.shouldRetry(job, status, errorSummary)) {
-        this.recordRetryingManagerJob("metrics", managerId, errorSummary ?? "Scheduled metrics collection failed", job);
-        return failedQueueResult(job.id, errorSummary ?? "Scheduled metrics collection failed");
-      }
       await this.completeManagerRun("metrics", runId, managerId, status, errorSummary);
       recordAudit(this.options.db, {
         actor: "scheduler",
@@ -319,15 +331,11 @@ class PgBossScheduler implements DurableScheduler {
       });
 
       if (status === "failed") {
-        return failedQueueResult(job.id, errorSummary ?? "Scheduled metrics collection failed");
+        return skippedFailureQueueResult(job.id, errorSummary ?? "Scheduled metrics collection failed");
       }
       return { id: job.id, status: "completed", output: { status, samples: result.sampleCount } };
     } catch (error) {
       const message = errorMessage(error);
-      if (this.shouldRetry(job, "failed", message)) {
-        this.recordRetryingManagerJob("metrics", managerId, message, job);
-        return failedQueueResult(job.id, message);
-      }
       await this.completeManagerRun("metrics", runId, managerId, "failed", message);
       recordAudit(this.options.db, {
         actor: "scheduler",
@@ -336,7 +344,7 @@ class PgBossScheduler implements DurableScheduler {
         resourceId: managerId,
         metadata: { message }
       });
-      return failedQueueResult(job.id, message);
+      return skippedFailureQueueResult(job.id, message);
     }
   }
 
@@ -368,17 +376,49 @@ class PgBossScheduler implements DurableScheduler {
     }
   }
 
-  private shouldRetry(job: QueueJob, status: ScheduleResult, message: string | undefined): boolean {
-    return status === "failed" && !isPermanentFailure(message ?? "") && (job.retryCount ?? 0) < (job.retryLimit ?? 0);
+  private async recoverStaleRuns(): Promise<void> {
+    const now = new Date();
+    const staleJobs = await listStaleSchedulerRunJobs(this.options.inventoryDb, now, staleRunAfterMs);
+    for (const job of staleJobs) {
+      if (!job.queueJobId) {
+        continue;
+      }
+      const queueName = job.jobType === "inventory" ? inventoryManagerQueue : metricsManagerQueue;
+      try {
+        await this.queue.cancel(queueName, job.queueJobId);
+      } catch (error) {
+        recordAudit(this.options.db, {
+          actor: "scheduler",
+          action: "scheduler.stale_job_cancel_failed",
+          resourceType: "manager",
+          resourceId: job.managerId,
+          metadata: { jobType: job.jobType, jobId: job.queueJobId, message: errorMessage(error) }
+        });
+      }
+    }
+    const recovered = await recoverStaleSchedulerRuns(this.options.inventoryDb, now, staleRunAfterMs);
+    for (const run of recovered) {
+      if (run.status !== "success" && run.status !== "partial" && run.status !== "failed") {
+        continue;
+      }
+      await markScheduleCompleted(this.options.inventoryDb, run.jobType, run.status, run.errorSummary);
+      recordAudit(this.options.db, {
+        actor: "scheduler",
+        action: "scheduler.stale_run_skipped",
+        resourceType: "scheduler_dispatch_run",
+        resourceId: run.id,
+        metadata: { jobType: run.jobType, status: run.status, completedManagers: run.completedManagerCount }
+      });
+    }
   }
 
-  private recordRetryingManagerJob(jobType: ScheduledJobType, managerId: string, message: string, job: QueueJob): void {
+  private recordLegacyJobDiscarded(jobType: ScheduledJobType, managerId: string, jobId: string): void {
     recordAudit(this.options.db, {
       actor: "scheduler",
-      action: "scheduler.manager_retrying",
+      action: "scheduler.legacy_job_skipped",
       resourceType: "manager",
       resourceId: managerId,
-      metadata: { jobType, message, retryAttempt: (job.retryCount ?? 0) + 1, retryLimit: job.retryLimit ?? 0 }
+      metadata: { jobType, jobId, reason: "missing_dispatch_run" }
     });
   }
 }
@@ -412,16 +452,18 @@ function managerSendOptions(jobType: ScheduledJobType, managerId: string): SendO
   };
 }
 
-function failedQueueResult(id: string, message: string): QueueJobResult {
-  return { id, status: isPermanentFailure(message) ? "deadletter" : "failed", output: { message } };
-}
-
-function isPermanentFailure(message: string): boolean {
-  return /credential|decrypt|manager not found|manager is disabled|invalid credentials|unauthori[sz]ed|forbidden|malformed manager url/i.test(message);
+function skippedFailureQueueResult(id: string, message: string): QueueJobResult {
+  return { id, status: "deadletter", output: { message, skippedUntilNextSchedule: true } };
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Scheduled job failed";
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+  return "Scheduled job failed";
 }
 
 function createPgBossQueue(config: AppConfig): DurableJobQueue {
@@ -448,6 +490,12 @@ function createPgBossQueue(config: AppConfig): DurableJobQueue {
     async createQueue(name, options) {
       await boss.createQueue(name, options as Omit<Queue, "name"> | undefined);
     },
+    async updateQueue(name, options) {
+      await boss.updateQueue(name, options as Omit<Queue, "name"> | undefined);
+    },
+    async cancel(name, id) {
+      await boss.cancel(name, id);
+    },
     async schedule(name, cron) {
       await boss.schedule(name, cron);
     },
@@ -468,6 +516,9 @@ function createPgBossQueue(config: AppConfig): DurableJobQueue {
     },
     async send(name, data, options) {
       return boss.send(name, data, options as SendOptions | undefined);
+    },
+    onError(handler) {
+      boss.on("error", handler);
     }
   };
 }

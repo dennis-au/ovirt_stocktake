@@ -417,6 +417,31 @@ export interface AppSettingsInput {
   metricsIntervalMinutes: number;
 }
 
+export interface SchedulerStatus {
+  backend: "pg-boss";
+  available: boolean;
+  running: boolean;
+  lastError?: string;
+  lastErrorAt?: string;
+}
+
+export interface SchedulerSchedule {
+  jobType: "inventory" | "metrics";
+  enabled: boolean;
+  intervalMinutes: number;
+  nextRunAt?: string;
+  lastQueuedAt?: string;
+  lastStartedAt?: string;
+  lastCompletedAt?: string;
+  lastResult?: "success" | "partial" | "failed";
+  consecutiveFailures: number;
+}
+
+export interface SchedulerResponse {
+  scheduler: SchedulerStatus;
+  schedules: SchedulerSchedule[];
+}
+
 export async function getHealth(): Promise<HealthResponse> {
   const response = await fetch("/api/health");
   if (!response.ok) {
@@ -462,6 +487,15 @@ export async function updateSettings(input: AppSettingsInput): Promise<AppSettin
     throw new Error(body?.error ?? `Settings update failed with HTTP ${response.status}`);
   }
   return body.settings;
+}
+
+export async function getScheduler(): Promise<SchedulerResponse> {
+  const response = await fetch("/api/scheduler");
+  const body = (await response.json().catch(() => undefined)) as SchedulerResponse | { error?: string } | undefined;
+  if (!response.ok || !body || !("scheduler" in body)) {
+    throw new Error((body && "error" in body && body.error) || `Scheduler request failed with HTTP ${response.status}`);
+  }
+  return body;
 }
 
 export async function login(username: string, password: string): Promise<SessionResponse> {
